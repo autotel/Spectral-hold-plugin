@@ -1,0 +1,40 @@
+# Agent Wiki — Spectral Hold
+
+Knowledge base for coding agents (Claude Code et al.) working on this project.
+**Read this before exploring the codebase.** It compiles the non-obvious facts so you
+don't have to re-derive them (and burn credits) every session.
+
+## What this project is
+A JUCE audio plugin: a **spectral hold / spectral freeze** effect. Input audio is
+analysed with an STFT and fed into a *running* spectral state that keeps playing
+forward forever. It does **not** loop a windowed grain — it extrapolates the
+Fourier transform: each bin is a free-running phasor (phase-vocoder synthesis), so
+held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, Linux.
+
+## Wiki index
+- [product-spec.md](product-spec.md) — the product specification **as given by the user**.
+  Keep development congruent with this. Do not silently diverge.
+- [architecture.md](architecture.md) — file layout, signal flow, threading.
+- [dsp-design.md](dsp-design.md) — the spectral engine: STFT, the held-phasor model,
+  feed/loss/filter/attack math, the filter compensation, the limiter. Design rationale.
+- [parameters.md](parameters.md) — every parameter: id, range, default, mapping.
+- [gui-display.md](gui-display.md) — the custom "lighting" spectrum view.
+- [build-and-test.md](build-and-test.md) — configure, build, run the offline test.
+- [gotchas.md](gotchas.md) — traps, decisions already made, things that look like bugs but aren't.
+
+## Fast facts
+- JUCE lives at `../JUCE` (sibling of repo root), used via `add_subdirectory`. Modern
+  `juce_add_plugin` CMake API. Reference plugins: `../tape-looper`, `../lanes-audio-plugin`.
+- Source in `Source/`. DSP isolated in `SpectralEngine.{h,cpp}` — depends only on
+  `juce_dsp`, so it is unit-testable without a host. Test target: `SpectralHoldTest`.
+- Build dir is `build/`. Build + test with `./build.sh`.
+- One `SpectralEngine` **per channel** (stereo = 2 independent engines). The limiter is
+  the only cross-channel (linked) stage; it lives in `PluginProcessor`.
+- FFT size is **GUI-only**, not a DAW parameter (deliberate — see product-spec). Default
+  4096. It is stored in plugin state manually, not in the APVTS.
+
+## Maintenance rule for agents
+When you change behavior, **update the relevant wiki page in the same task**. Keep pages
+dense and factual. Do not duplicate code into the wiki — describe intent, invariants, and
+rationale that the code alone doesn't convey. If you change DSP, re-run `./build.sh` and
+make sure the smoke-test still passes.

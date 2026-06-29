@@ -1,0 +1,47 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+*.cmake.stamp
+_deps/
+
+# JUCE generated
+JuceLibraryCode/
+Builds/
+*.jucer
+
+# Installed plugin binaries
+*.vst3/
+*.component/
+*.so
+*.a
+*.o
+*.dylib
+*.dll
+*.exe
+
+# IDE / editor
+.vscode/
+.idea/
+*.code-workspace
+.cache/
+compile_commands.json
+*.user
+
+# OS cruft
+.DS_Store
+Thumbs.db
+*~
+*.swp
+
+# Scratch / logs
+*.log
+scratchpad/
+.autopilot/
