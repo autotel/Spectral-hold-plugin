@@ -43,6 +43,14 @@ public:
     int getDisplaySnapshot (std::vector<float>& mag, std::vector<float>& phase,
                             double& sr, int& size);
 
+    // GUI brush edit: scale the held spectrum around centreFreqHz (all channels).
+    // strength in [-1..+1]: +boost, 0 none, -cut. See SpectralEngine::queueBrush.
+    void applySpectralBrush (float centreFreqHz, float strength)
+    {
+        for (auto& e : engines)
+            e.queueBrush (centreFreqHz, strength);
+    }
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
@@ -55,6 +63,7 @@ private:
     std::atomic<float>* pFiltA  = nullptr;
     std::atomic<float>* pFiltT  = nullptr;
     std::atomic<float>* pAttack = nullptr;
+    std::atomic<float>* pCompress = nullptr;
 
     // slow linked limiter state
     float limEnv  = 0.0f;

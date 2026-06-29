@@ -15,10 +15,23 @@
 ## Filter curve overlay
 - Drawn **only when Filter amount > 0**. It plots `SpectralEngine::filterGain(freq, tone, amt)`
   across the same log-x axis (`1` at top = no attenuation, `0` at bottom = full bell cut), as a
-  soft amber stroke, plus a faint vertical line at the bell centre (Filter Tone).
+  soft amber stroke. **No centre line** — the curve alone (by request).
 - It calls the **same** `SpectralEngine::filterGain` static the DSP uses, so the displayed
   curve always matches the actual shaping (shared `kSigmaOct`). Don't reimplement the bell here.
 - Params are read live from the APVTS (`filterAmt`, `filterTone`) in `paint`.
+
+## Brush editing (interactive)
+- The view is editable: drag (mouse or pen) to reshape the held spectrum via
+  `proc.applySpectralBrush(freq, strength)` → `SpectralEngine::queueBrush` (see dsp-design).
+- x = tone (log) → brush centre; y → strength (top boost, centre none, bottom cut).
+- **Brush cursor**: while the pointer is inside, a soft full-height glow is drawn with a
+  gaussian falloff across tones (same `kBrushSigmaOct` as the DSP), tinted by sign —
+  **green = boost, red = cut**, alpha by `|strength|` — plus a dot at the cursor and a faint
+  centre line marking "no change". The system cursor is hidden (`NoCursor`) so this is the cursor.
+- **Pen**: handled through the normal `mouseDown/Drag/Move` path. If the source reports
+  pressure (`e.source.isPressureValid()`), `e.pressure` scales the brush strength; mouse =
+  full strength. No separate pen event path needed.
+- Hovering (`mouseMove`) previews the cursor but does **not** edit; only down/drag edit.
 
 ## Data path
 - 30 Hz `Timer` calls `proc.getDisplaySnapshot()` → `SpectralEngine::copyDisplay()`,

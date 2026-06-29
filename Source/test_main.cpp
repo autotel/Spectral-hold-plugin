@@ -113,6 +113,105 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // 5) brush edit: boosting a held band raises its level, cutting lowers it
+    {
+        eng.setOrder (12);
+        eng.reset();
+        double ph = 0.0, w = 2.0 * M_PI * 1000.0 / sr;
+        std::vector<float> buf (block);
+        // deposit a 1 kHz tone, then stop input and let it hold
+        for (int b = 0; b < (int) (0.4 * sr / block); ++b)
+        {
+            for (int i = 0; i < block; ++i) { buf[i] = 0.5f * (float) std::sin (ph); ph += w; }
+            eng.process (buf.data(), buf.data(), block, p);
+        }
+        auto holdRms = [&]
+        {
+            // flush past the STFT latency (fftSize = 4096 = 16 blocks) so the output
+            // reflects the *current* held state and any drained edits, then measure.
+            for (int b = 0; b < 24; ++b) { std::fill (buf.begin(), buf.end(), 0.0f); eng.process (buf.data(), buf.data(), block, p); }
+            return rms (buf.data(), block);
+        };
+        float before = holdRms();
+        for (int i = 0; i < 60; ++i)  eng.queueBrush (1000.0f, +1.0f); // boost @ 1 kHz
+        float afterUp = holdRms();
+        for (int i = 0; i < 120; ++i) eng.queueBrush (1000.0f, -1.0f); // cut @ 1 kHz
+        float afterDn = holdRms();
+        bool ok = std::isfinite (afterUp) && std::isfinite (afterDn)
+                  && afterUp > before * 1.3f && afterDn < afterUp * 0.5f;
+        printf ("[%s] brush edit: before=%.4f up=%.4f down=%.4f\n",
+                ok ? "PASS" : "FAIL", before, afterUp, afterDn);
+        fails += ok ? 0 : 1;
+    }
+
+    // 6) compress: +expand widens the loud/quiet ratio, -homogenise narrows it
+    {
+        const int B500 = (int) std::lround (500.0  * 4096.0 / sr);  // ~bin 43
+        const int B2k  = (int) std::lround (2000.0 * 4096.0 / sr);  // ~bin 171
+        std::vector<float> m, ph, buf2 (block);
+
+        auto deposit = [&]
+        {
+            eng.setOrder (12); eng.reset();
+            double a = 0.0, b = 0.0, wa = 2.0 * M_PI * 500.0 / sr, wb = 2.0 * M_PI * 2000.0 / sr;
+            for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+            {
+                for (int i = 0; i < block; ++i) { buf2[i] = 0.5f * (float) std::sin (a) + 0.1f * (float) std::sin (b); a += wa; b += wb; }
+                eng.process (buf2.data(), buf2.data(), block, p);
+            }
+        };
+        auto ratioAfter = [&] (float compress, int blocks)
+        {
+            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.compress = compress;
+            for (int blk = 0; blk < blocks; ++blk) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); }
+            int n = 0; for (int t = 0; t < 8 && n == 0; ++t) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); n = eng.copyDisplay (m, ph); }
+            return m[(size_t) B500] / juce::jmax (1.0e-9f, m[(size_t) B2k]);
+        };
+
+        deposit(); float base = ratioAfter (0.0f, 8);
+        deposit(); float expanded = ratioAfter (+0.9f, 120);
+        deposit(); float homogen  = ratioAfter (-0.9f, 120);
+        bool ok = std::isfinite (expanded) && std::isfinite (homogen)
+                  && expanded > base * 1.3f && homogen < base * 0.8f;
+        printf ("[%s] compress: base=%.2f expand=%.2f homogenise=%.2f\n",
+                ok ? "PASS" : "FAIL", base, expanded, homogen);
+        fails += ok ? 0 : 1;
+    }
+
+    // 7) feed=0 freezes: output must be independent of the input (no phase leak)
+    {
+        auto run = [&] (bool driveInput, std::vector<float>& outTail)
+        {
+            SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+            std::vector<float> b (block);
+            double a = 0.0, w = 2.0 * M_PI * 500.0 / sr;
+            // identical deposit at 500 Hz with feed
+            for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+            {
+                for (int i = 0; i < block; ++i) { b[i] = 0.5f * (float) std::sin (a); a += w; }
+                e2.process (b.data(), b.data(), block, p);
+            }
+            // freeze (feed=0); optionally drive a loud, unrelated 2 kHz input
+            SpectralEngine::Params f; f.feed = 0.0f; f.loss = 0.0f;
+            double a2 = 0.0, w2 = 2.0 * M_PI * 2000.0 / sr;
+            outTail.assign (block, 0.0f);
+            for (int blk = 0; blk < 60; ++blk)
+            {
+                for (int i = 0; i < block; ++i) b[i] = driveInput ? 0.8f * (float) std::sin (a2) : 0.0f, a2 += w2;
+                e2.process (b.data(), b.data(), block, f);
+            }
+            outTail.assign (b.begin(), b.end());
+        };
+        std::vector<float> silentDriven, inputDriven;
+        run (false, silentDriven);
+        run (true,  inputDriven);
+        float maxDiff = 0.0f;
+        for (int i = 0; i < block; ++i) maxDiff = juce::jmax (maxDiff, std::abs (silentDriven[i] - inputDriven[i]));
+        bool ok = maxDiff < 1.0e-4f;
+        printf ("[%s] feed=0 ignores input: maxDiff=%.2e\n", ok ? "PASS" : "FAIL", maxDiff);
+        fails += ok ? 0 : 1;
+    }
+
     printf ("\n%s (%d failure%s)\n", fails == 0 ? "ALL PASS" : "FAILURES",
             fails, fails == 1 ? "" : "s");
     return fails == 0 ? 0 : 1;

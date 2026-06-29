@@ -10,6 +10,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (filterAmt,  "filterAmt",  "Filter");
     setupKnob (filterTone, "filterTone", "Tone");
     setupKnob (attack,     "attack",     "Attack");
+    setupKnob (compress,   "compress",   "Compress");
 
     // FFT size: GUI-only (not a DAW parameter).
     addAndMakeVisible (sizeBox);
@@ -59,10 +60,10 @@ void SpectralHoldEditor::resized()
     display.setBounds (top.reduced (8));
 
     auto controls = r.reduced (8, 0);
-    const int n = 5;
+    const int n = 6;
     const int kw = controls.getWidth() / n;
 
-    Knob* knobs[n] = { &feed, &loss, &filterAmt, &filterTone, &attack };
+    Knob* knobs[n] = { &feed, &loss, &filterAmt, &filterTone, &attack, &compress };
     for (auto* k : knobs)
     {
         auto cell = controls.removeFromLeft (kw);

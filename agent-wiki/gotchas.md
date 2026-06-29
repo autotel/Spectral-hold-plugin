@@ -51,6 +51,19 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   buffers) passes. Regression-guarded by the "in-place (in==out)" case in `test_main.cpp`.
   When adding DSP tests, always include an `in == out` path.
 
+## Brush edits seem to "do nothing"
+- The brush scales the held `S`. Three reasons it can look inert, none a bug:
+  1. **Feed washes it out.** With input flowing and Feed > 0, the loop re-injects input levels
+     every hop and `S` returns to steady state in ~1/(1-decay) frames. Brush edits are most
+     visible on *held* content (input stopped / low Feed). `kBrushRate` was raised to 0.05 so a
+     short drag is clearly audible.
+  2. **STFT latency** (`fftSize` samples, ~85 ms at 4096/48k): edits reach the output one
+     latency later, not instantly.
+  3. The brush **scales existing energy** — boosting a bin with ~0 energy stays ~0. It shapes
+     present tones; it doesn't synthesise new ones.
+- Vertical position is the strength: near the centre line strength ≈ 0, so dragging through the
+  middle intentionally does nothing.
+
 ## Standalone: no audio / empty display
 - The JUCE **Standalone mutes audio input by default** — not a plugin bug. In
   `juce_StandaloneFilterWindow.h`: `processorHasPotentialFeedbackLoop = inputs>0 && outputs>0`

@@ -39,6 +39,14 @@ input stops, so the tail sustains at the captured pitch. Leakage bins of one par
 ~the same `omega`, so they stay coherent → smooth continuous tone. JUCE forward transform uses
 `exp(-i…)` and inverse `exp(+i…)`, so the measured advance is used directly as a `+omega` rotation.
 
+**Feed gates the tracking.** The update is `omega[k] += (measured - omega[k]) · trackW` with
+`trackW = Feed`. This matters: the tracking is a *second* input coupling (the input retunes the
+held pitch via phase), separate from magnitude injection. If it ran unconditionally, the input
+would keep bending the held tones even at `feed=0` — audible "phase leak". Gating by Feed makes
+`feed=0` a true freeze (input fully ignored, verified by the `feed=0 ignores input` test) and
+`feed=1` snap to the input pitch each frame (the original smooth behavior). `prevPhase` is still
+updated every frame regardless (bookkeeping only; it never reaches the audio).
+
 `S` is then written straight into the inverse FFT — there is **no** separate output filter.
 The filter is entirely inside `decay[k]`.
 
@@ -64,22 +72,53 @@ Let `hop = hopSize`, `sr = sampleRate`.
     `σ = kSigmaOct = 1.25` octaves (constant; not exposed — change here if needed).
     Bin 0 (DC) is treated as fully out of band.
   - `gFilt[k] = 1 - filterAmt·(1 - bell[k])`  →  ranges `[1-filterAmt .. 1]`.
-  - `decay[k] = max(kDecayFloor, lossDecay · gFilt[k])`. So the filter is a
-    **frequency-dependent loss**: in-bell bins decay at the loss rate, out-of-bell bins
-    decay faster. Moving Filter Tone sweeps which partials survive in the held drone.
+  - **The filter is NON-DESTRUCTIVE output shaping** (changed from an earlier destructive
+    design). It does **not** enter `decay[k]` — the held state decays by `lossDecay` only.
+    Output is `S[k] · gFilt[k]`. So turning the filter down restores the held waves intact,
+    and sweeping Filter Tone sweeps the audible drone without permanently erasing partials.
 
 ## Filter compensation (the in/out invariant)
-Spec: fed tones must come out "as if there was no filter". Since the filter lives in the
-decay, fresh input would otherwise be attenuated on the very frame it enters. So injection
-is pre-divided by the filter gain:
+Spec: fed tones must come out "as if there was no filter". Since output is multiplied by
+`gFilt`, fresh input would otherwise be attenuated at the output. So injection is
+pre-divided by the filter gain:
 
 - `comp[k] = 1 / max(kCompFloor, gFilt[k])`  (`kCompFloor = 0.05` prevents blow-up where
   the bell → 0).
 
-Then the fresh contribution to the frame is `feed·Xs·comp · decay = feed·Xs · lossDecay`,
-which is **independent of the filter** — exactly the requested constant in/out relationship.
-The held tail still gets the frequency-dependent decay, because compensation only cancels
-the filter for the freshly injected term, not for content already in `S`.
+Fresh input's output contribution is `feed·Xs·comp · lossDecay · gFilt = feed·Xs·lossDecay`,
+independent of the filter — the requested constant in/out relationship. The held tail is
+shaped at the output by the *current* `gFilt`, so moving the filter is audible, while `S`
+itself is never lowered by the filter.
+
+## Compress (per-tone level reshaping)
+Applied to the held state `S` once per frame, before the main update (`processFrame`). It
+reshapes each tone's level relative to a **pivot = the mean magnitude of the *active* bins**
+(bins above `maxMag·1e-3`; the empty noise floor is excluded so the pivot doesn't collapse to
+~0, and those bins are left untouched). Per active bin:
+```
+ratio = clamp(|S[k]| / mean, 0.01, 100)
+S[k] *= ratio ^ (compress · kCompressRate)     // kCompressRate = 0.05
+```
+- `compress > 0` → exponent > 0 → bins above the mean get louder, below get quieter:
+  **expansion / purify** (the dominant tones win).
+- `compress < 0` → bins above the mean drop, below rise: **homogenise** (levels even out).
+It's gentle per frame so it acts over time (like loss). The limiter and loss bound any runaway
+of the loud bins. Verified by the offline `compress:` test (two tones; ratio widens vs narrows).
+
+## Spectral brush (GUI editing of the held state)
+Dragging on the display (`SpectrumDisplay`) permanently reshapes the held spectrum `S` —
+this is the destructive editor (distinct from the non-destructive filter). Each pointer
+event is queued via `SpectralEngine::queueBrush(centreFreqHz, strength)` and applied on the
+audio thread in `drainBrush()` (at a frame boundary, under a try-lock — never blocks audio):
+- `strength ∈ [-1..+1]` from the vertical position: **top = +1 (boost), centre = 0 (no
+  change), bottom = -1 (cut)**, smooth through zero.
+- Gaussian falloff in log-frequency around the cursor (`kBrushSigmaOct = 0.6` oct), so it's
+  a blurred brush, strongest at the centre tone.
+- Per event: `S[k] *= exp(strength · w · kBrushRate · ln(kBrushMaxFactor))`. `kBrushRate`
+  (0.012) is small so it compounds smoothly as you hold/drag (paint-like), rather than
+  snapping. Pen pressure (if reported) scales `strength`.
+- Note for testers: edits to `S` only reach the output after the **STFT latency** (fftSize
+  samples). The offline brush test flushes >fftSize samples before measuring.
 
 ## Limiter (in `PluginProcessor`, not the engine)
 Linked across channels so the stereo image is preserved.
