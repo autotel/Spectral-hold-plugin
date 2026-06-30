@@ -1,8 +1,0 @@
-I think an additional reason for the interference patterns after harmonization is due to two close tones being counted as one in terms of harmonization. I saw that happen, at least based on the graphic representations. i saw to white clusters very close to one another (maybe one bin in between?) that had only one tone line between them, in the empty space.
-Also, are lower-volume tones being harmonized too? it sounds like not.
-
-Also add a switch that makes the plugin report 0 PDC for live use. Defaults to false.
-
-On main branch do the following: Add an output level knob, at position 3. Remove attack knob because it has the same effect as lower feed value. Compress knob goes to position 4. the filter related knobs then move right to 5 and 6. These changes should be merged into experimental branch afterwards. 
-
-Make the plugin save the preset with the ongoing sound with it.

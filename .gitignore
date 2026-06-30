@@ -45,3 +45,6 @@ Thumbs.db
 *.log
 scratchpad/
 .autopilot/
+
+# user scratch
+next prompt
