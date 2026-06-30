@@ -54,7 +54,7 @@ public:
     void queueBrush (float centreFreqHz, float strength, float sigmaOct);
     static constexpr float kBrushSigmaOct = 0.6f;  // default brush half-width in octaves
     static constexpr float kBrushMaxFactor = 8.0f; // gain factor at full strength/centre
-    static constexpr float kBrushRate = 0.05f;     // per-event exponent scale (brush feel)
+    static constexpr float kBrushRate = 0.10f;     // per-tick exponent scale (brush speed)
 
 private:
     void applyPendingOrder();
