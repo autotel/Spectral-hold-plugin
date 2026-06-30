@@ -309,6 +309,37 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // 11) unison lock: two close tones entrain, lock to one frequency, and stop beating
+    //     (block-RMS becomes steady instead of pulsing).
+    {
+        auto beatDepth = [&] (float harmonize)
+        {
+            SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+            std::vector<float> b (block);
+            double a = 0.0, c = 0.0, wa = 2.0 * M_PI * 500.0 / sr, wc = 2.0 * M_PI * 560.0 / sr;
+            for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+            {
+                for (int i = 0; i < block; ++i) { b[i] = 0.45f * (float) std::sin (a) + 0.45f * (float) std::sin (c); a += wa; c += wc; }
+                e2.process (b.data(), b.data(), block, p);
+            }
+            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.harmonize = harmonize; h.harmWidth = 1.0f;
+            for (int blk = 0; blk < 600; ++blk) { std::fill (b.begin(), b.end(), 0.0f); e2.process (b.data(), b.data(), block, h); }
+            float mn = 1.0e9f, mx = 0.0f;
+            for (int blk = 0; blk < 120; ++blk)
+            {
+                std::fill (b.begin(), b.end(), 0.0f); e2.process (b.data(), b.data(), block, h);
+                float r = rms (b.data(), block);
+                mn = juce::jmin (mn, r); mx = juce::jmax (mx, r);
+            }
+            return mx > 1.0e-6f ? (mx - mn) / mx : 0.0f; // 0 = steady, ->1 = strong beating
+        };
+        float off = beatDepth (0.0f);   // no harmonize: tones beat
+        float on  = beatDepth (1.0f);   // harmonize: should lock -> steady
+        bool ok = on < 0.5f * off || on < 0.1f;
+        printf ("[%s] unison lock: beat depth off=%.2f on=%.2f\n", ok ? "PASS" : "FAIL", off, on);
+        fails += ok ? 0 : 1;
+    }
+
     printf ("\n%s (%d failure%s)\n", fails == 0 ? "ALL PASS" : "FAILURES",
             fails, fails == 1 ? "" : "s");
     return fails == 0 ? 0 : 1;

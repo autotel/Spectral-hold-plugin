@@ -72,6 +72,22 @@ Verified by the `energy migration:` test: a weak tone is pulled to a strong anch
 harmonic and lands **below** its omega-only floor (1400 → ~1371 Hz, past ~1383), proving the
 energy actually moved bins.
 
+## Unison lock (why beating eventually stops)
+Two tones entrained to *almost* the same frequency would otherwise sit a hair mistuned and
+**beat forever** — each tone is a separate per-bin phasor, and the detector stops resolving
+them as two before they reach exact unison, so entrainment stalls. Fix: when two peaks are
+within `lockTolHz` (~1.5 bins) in frequency, **lock their `omega` to the common
+(amplitude-weighted) value**. Identical `omega` → the two phasors advance in lockstep → their
+sum is steady → no time-varying beat (a fixed comb may remain; that's inherent to two phasors
+in different bins). We deliberately **don't** merge/move energy — that fought the multi-bin
+leakage (tones just settled at the tolerance and kept beating). Peak detection uses a narrow
+±2-bin prominence so near tones stay resolved as two and keep entraining until the lock catches
+them. Verified by the `unison lock:` test (beat depth 0.73 → ~0.14).
+
+Caveat: this is *frequency* lock, not true sinusoid merging. Truly collapsing two tones into
+one (and guaranteeing zero residual) would need a sinusoidal-model rewrite (track tones as
+amplitude/freq/phase objects and resynthesise) — noted as a possible future stage.
+
 ## Tuning / next steps
 Constants at the top of `SpectralEngine.cpp`: `kEntRate`, `kHarmRate`, `kHarmStep`,
 `kPeakFloor`, `kMaxDen`, `kMaxPeaks`, and `kPad` (migration packet half-width). The GUI

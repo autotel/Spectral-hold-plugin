@@ -350,9 +350,11 @@ void SpectralEngine::applyHarmonize (const Params& p)
     {
         const float a = std::abs (S[(size_t) k]);
         if (a <= floor) continue;
-        // prominence: must be the local max over +/-4 bins (excludes leakage sidelobes)
+        // prominence: local max over +/-2 bins (the floor already rejects Hann sidelobes;
+        // a narrow window keeps two near tones resolved as two peaks so they keep entraining
+        // until they are close enough to merge)
         bool isPeak = true;
-        for (int o = -4; o <= 4 && isPeak; ++o)
+        for (int o = -2; o <= 2 && isPeak; ++o)
             if (o != 0 && std::abs (S[(size_t) (k + o)]) > a) isPeak = false;
         if (isPeak)
         {
@@ -364,6 +366,28 @@ void SpectralEngine::applyHarmonize (const Params& p)
         }
     }
     if (P < 2) return;
+
+    // 1b. lock near-unison peaks to the SAME exact frequency. Two tones that have entrained
+    // to within ~a bin still sit a hair mistuned and beat forever (the interference that never
+    // resolves). Forcing their omega equal makes the two phasors advance in lockstep, so their
+    // sum is steady (a fixed comb, no time-varying beat). We don't move energy (that fights the
+    // multi-bin leakage); we only equalise frequency. Frequency-based so it catches same-pitch
+    // peaks regardless of which bins hold them.
+    const float lockTolHz = (float) sampleRate / (float) fftSize * 1.5f;
+    for (int i = 0; i < P; ++i)
+        for (int j = i + 1; j < P; ++j)
+        {
+            if (std::abs (peakFreq[(size_t) i] - peakFreq[(size_t) j]) >= lockTolHz)
+                continue;
+            const float wi = peakAmp[(size_t) i], wj = peakAmp[(size_t) j];
+            const float mo = (wi * omega[(size_t) peakBin[(size_t) i]]
+                            + wj * omega[(size_t) peakBin[(size_t) j]]) / (wi + wj + 1.0e-12f);
+            for (int p2 : { peakBin[(size_t) i], peakBin[(size_t) j] })
+                for (int o = -1; o <= 1; ++o)
+                    if (p2 + o >= 1 && p2 + o < numBins)
+                        omega[(size_t) (p2 + o)] = mo;
+            peakFreq[(size_t) i] = peakFreq[(size_t) j] = mo * fScale;
+        }
 
     const float invSig2 = 1.0f / (2.0f * juce::jmax (0.005f, p.harmWidth) * p.harmWidth);
 
