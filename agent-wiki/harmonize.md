@@ -72,10 +72,18 @@ Verified by the `energy migration:` test: a weak tone is pulled to a strong anch
 harmonic and lands **below** its omega-only floor (1400 → ~1371 Hz, past ~1383), proving the
 energy actually moved bins.
 
-## Unison lock (why beating eventually stops)
+## What causes the lingering beating (and what doesn't)
+Only **slow, audible** beating is a problem, and its sole cause here is tones entraining to
+*almost* the same frequency and **stalling a hair mistuned** (below). Note what is **not** a
+cause: locking to a simple harmonic ratio (3/2, 4/3…) gives a **short** common period, so its
+interference is fast — perceived as timbre, not as audible beating. Short-period interference is
+not a sign of inharmonicity, so harmonic ratios don't need "fixing".
+
+## Unison lock (why slow beating eventually stops)
 Two tones entrained to *almost* the same frequency would otherwise sit a hair mistuned and
-**beat forever** — each tone is a separate per-bin phasor, and the detector stops resolving
-them as two before they reach exact unison, so entrainment stalls. Fix: when two peaks are
+**beat forever** (a slow, audible beat) — each tone is a separate per-bin phasor, and the
+detector stops resolving them as two before they reach exact unison, so entrainment stalls.
+Fix: when two peaks are
 within `lockTolHz` (~1.5 bins) in frequency, **lock their `omega` to the common
 (amplitude-weighted) value**. Identical `omega` → the two phasors advance in lockstep → their
 sum is steady → no time-varying beat (a fixed comb may remain; that's inherent to two phasors
