@@ -178,9 +178,11 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         const float invS2  = 1.0f / (2.0f * sig * sig);
         const float centreOct = std::log2 (juce::jmax (20.0f, xToFreq (mousePos.x)));
         const float mag01  = std::abs (brushStrength);
-        // colour: boost -> green, cut -> red, neutral near centre
-        const float hue    = brushStrength >= 0.0f ? 0.35f : 0.02f;
-        const auto  col    = juce::Colour::fromHSV (hue, 0.7f, 1.0f, 1.0f);
+        // colour: boost -> aurora blue, cut -> red
+        const bool  boost  = brushStrength >= 0.0f;
+        const float hue    = boost ? 0.52f : 0.02f;   // aurora cyan-blue / red
+        const float sat    = boost ? 0.55f : 0.7f;
+        const auto  col    = juce::Colour::fromHSV (hue, sat, 1.0f, 1.0f);
 
         for (int x = 0; x < W; ++x)
         {
