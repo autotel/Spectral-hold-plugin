@@ -69,10 +69,6 @@ void SpectralLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     Point<float> b (cx + std::sin (angle) * p1, cy - std::cos (angle) * p1);
     g.setColour (Colours::white.withAlpha (0.9f));
     g.drawLine ({ a, b }, 2.5f);
-
-    // centre hub
-    g.setColour (accent.withAlpha (0.85f));
-    g.fillEllipse (cx - 3.0f, cy - 3.0f, 6.0f, 6.0f);
 }
 
 juce::Label* SpectralLookAndFeel::createSliderTextBox (juce::Slider& s)
