@@ -46,8 +46,8 @@ void SpectralLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
 
     // body with a soft radial shade
     {
-        ColourGradient body (Colour (0xff2b2b37), cx, cy - radius * 0.4f,
-                             Colour (0xff15151c), cx, cy + radius, false);
+        ColourGradient body (Colour (0xff15151b), cx, cy - radius * 0.4f,
+                             Colour (0xff0a0a0e), cx, cy + radius, false);
         g.setGradientFill (body);
         g.fillEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
         g.setColour (Colour (0xff34343f));

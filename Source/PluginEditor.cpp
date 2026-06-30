@@ -63,6 +63,9 @@ void SpectralHoldEditor::setupKnob (Knob& k, const juce::String& paramId, const 
     k.slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     k.slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 64, 16);
     k.slider.setRepaintsOnMouseActivity (true); // so the runway shine reacts to hover
+    // kill the value-readout box outline/background (component-level override wins)
+    k.slider.setColour (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
+    k.slider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (k.slider);
 
     k.label.setText (text, juce::dontSendNotification);
