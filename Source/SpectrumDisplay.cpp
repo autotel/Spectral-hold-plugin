@@ -183,7 +183,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     if (harmAmt > 0.001f && peakCount > 0)
     {
         const float sigma = pHarmWidth != nullptr ? pHarmWidth->load() : 0.5f;
-        const float invS2 = 1.0f / (2.0f * juce::jmax (0.05f, sigma) * sigma);
+        const float invS2 = 1.0f / (2.0f * juce::jmax (0.01f, sigma) * sigma);
         const float band  = (float) H * 0.30f;       // influence humps live in the top band
         float maxW = 1.0e-9f;
         for (int i = 0; i < peakCount; ++i) maxW = juce::jmax (maxW, peakWeight[(size_t) i]);

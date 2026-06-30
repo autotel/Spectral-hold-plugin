@@ -358,7 +358,7 @@ void SpectralEngine::applyHarmonize (const Params& p)
     }
     if (P < 2) return;
 
-    const float invSig2 = 1.0f / (2.0f * juce::jmax (0.02f, p.harmWidth) * p.harmWidth);
+    const float invSig2 = 1.0f / (2.0f * juce::jmax (0.005f, p.harmWidth) * p.harmWidth);
 
     // 2. reciprocal pull: compute every peak's drift from the same snapshot
     for (int i = 0; i < P; ++i)
