@@ -2,12 +2,13 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
 #include "SpectrumDisplay.h"
+#include "SpectralLookAndFeel.h"
 
 class SpectralHoldEditor : public juce::AudioProcessorEditor
 {
 public:
     explicit SpectralHoldEditor (SpectralHoldProcessor&);
-    ~SpectralHoldEditor() override = default;
+    ~SpectralHoldEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -25,6 +26,8 @@ private:
     void setupKnob (Knob&, const juce::String& paramId, const juce::String& text);
 
     SpectralHoldProcessor& proc;
+
+    SpectralLookAndFeel lnf; // declared first so it outlives the components using it
 
     SpectrumDisplay display;
 

@@ -25,7 +25,8 @@ target_sources(SpectralHold PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/SpectralEngine.cpp
-    Source/SpectrumDisplay.cpp)
+    Source/SpectrumDisplay.cpp
+    Source/SpectralLookAndFeel.cpp)
 
 target_compile_definitions(SpectralHold PUBLIC
     JUCE_WEB_BROWSER=0

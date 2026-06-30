@@ -3,6 +3,7 @@
 SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     : AudioProcessorEditor (p), proc (p), display (p)
 {
+    setLookAndFeel (&lnf);
     addAndMakeVisible (display);
 
     setupKnob (feed,       "feed",       "Feed");
@@ -50,6 +51,11 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     addAndMakeVisible (brushLabel);
 
     setSize (720, 420);
+}
+
+SpectralHoldEditor::~SpectralHoldEditor()
+{
+    setLookAndFeel (nullptr);
 }
 
 void SpectralHoldEditor::setupKnob (Knob& k, const juce::String& paramId, const juce::String& text)
