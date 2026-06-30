@@ -35,21 +35,20 @@ float SpectrumDisplay::yToStrength (float y) const
 }
 
 // --- editing ---------------------------------------------------------------
-void SpectrumDisplay::applyEdit (const juce::MouseEvent& e)
+// The brush is TIME-based: holding the button at a point keeps reshaping the wave (applied
+// each timer tick in timerCallback), so you don't have to keep moving the pointer. Mouse
+// events only update the target position/strength; they don't apply on their own.
+void SpectrumDisplay::updateBrushTarget (const juce::MouseEvent& e)
 {
-    const auto pos = e.position;
-    mousePos = pos;
-
-    float strength = yToStrength (pos.y);
-    // Pen pressure (if the device reports it) scales the brush; mouse -> full strength.
-    const float pressure = e.source.isPressureValid() ? juce::jlimit (0.05f, 1.0f, e.pressure)
-                                                       : 1.0f;
-    brushStrength = strength;
-    proc.applySpectralBrush (xToFreq (pos.x), strength * pressure);
+    mousePos = e.position;
+    mouseInside = true;
+    brushStrength = yToStrength (e.position.y);
+    brushPressure = e.source.isPressureValid() ? juce::jlimit (0.05f, 1.0f, e.pressure) : 1.0f;
 }
 
-void SpectrumDisplay::mouseDown (const juce::MouseEvent& e) { applyEdit (e); repaint(); }
-void SpectrumDisplay::mouseDrag (const juce::MouseEvent& e) { applyEdit (e); repaint(); }
+void SpectrumDisplay::mouseDown (const juce::MouseEvent& e) { brushHeld = true;  updateBrushTarget (e); repaint(); }
+void SpectrumDisplay::mouseDrag (const juce::MouseEvent& e) { updateBrushTarget (e); repaint(); }
+void SpectrumDisplay::mouseUp   (const juce::MouseEvent&)   { brushHeld = false; repaint(); }
 
 void SpectrumDisplay::mouseMove (const juce::MouseEvent& e)
 {
@@ -75,6 +74,10 @@ void SpectrumDisplay::mouseExit (const juce::MouseEvent&)
 // --- snapshot --------------------------------------------------------------
 void SpectrumDisplay::timerCallback()
 {
+    // time-based brush: while the button is held, keep applying at a steady rate
+    if (brushHeld)
+        proc.applySpectralBrush (xToFreq (mousePos.x), brushStrength * brushPressure, brushSigmaOct);
+
     double sr = sampleRate;
     int    sz = fftSize;
     int n = proc.getDisplaySnapshot (mag, phase, sr, sz);
@@ -171,7 +174,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     // --- brush cursor ------------------------------------------------------
     if (mouseInside)
     {
-        const float sig    = SpectralEngine::kBrushSigmaOct;     // octaves (matches DSP)
+        const float sig    = brushSigmaOct;                       // octaves (matches DSP)
         const float invS2  = 1.0f / (2.0f * sig * sig);
         const float centreOct = std::log2 (juce::jmax (20.0f, xToFreq (mousePos.x)));
         const float mag01  = std::abs (brushStrength);

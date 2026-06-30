@@ -23,6 +23,10 @@ public:
     void mouseMove  (const juce::MouseEvent&) override;
     void mouseDown  (const juce::MouseEvent&) override;
     void mouseDrag  (const juce::MouseEvent&) override;
+    void mouseUp    (const juce::MouseEvent&) override;
+
+    // Brush size (GUI-only), gaussian half-width in octaves. Set from the editor.
+    void setBrushSigmaOct (float s) { brushSigmaOct = juce::jmax (0.05f, s); repaint(); }
 
 private:
     void timerCallback() override;
@@ -30,7 +34,7 @@ private:
     float xToFreq (float x) const;       // pixel -> frequency (log)
     float freqToX (float freq) const;    // frequency -> pixel (log)
     float yToStrength (float y) const;   // pixel -> [-1..+1] (top=+1, centre=0, bottom=-1)
-    void  applyEdit (const juce::MouseEvent&);
+    void  updateBrushTarget (const juce::MouseEvent&);
 
     SpectralHoldProcessor& proc;
 
@@ -46,7 +50,10 @@ private:
     // brush cursor state (message thread / paint only)
     juce::Point<float> mousePos;
     bool  mouseInside = false;
+    bool  brushHeld = false;    // button down -> apply continuously (time-based) via the timer
     float brushStrength = 0.0f; // current vertical strength under the cursor
+    float brushPressure = 1.0f; // pen pressure (1 for mouse)
+    float brushSigmaOct = 0.6f; // brush size (octaves), GUI-only
 
     static constexpr float kMinHz = 20.0f;
     static constexpr float kMaxHz = 20000.0f;

@@ -33,5 +33,11 @@ private:
     juce::Label    sizeLabel;
     juce::ComboBox sizeBox;
 
+    juce::ToggleButton noiseButton { "Phase Noise" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> noiseAttach;
+
+    juce::Label  brushLabel;
+    juce::Slider brushSizeSlider; // GUI-only brush size, not a DAW parameter
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectralHoldEditor)
 };

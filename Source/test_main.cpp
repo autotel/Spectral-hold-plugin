@@ -133,9 +133,9 @@ int main()
             return rms (buf.data(), block);
         };
         float before = holdRms();
-        for (int i = 0; i < 60; ++i)  eng.queueBrush (1000.0f, +1.0f); // boost @ 1 kHz
+        for (int i = 0; i < 60; ++i)  eng.queueBrush (1000.0f, +1.0f, 0.6f); // boost @ 1 kHz
         float afterUp = holdRms();
-        for (int i = 0; i < 120; ++i) eng.queueBrush (1000.0f, -1.0f); // cut @ 1 kHz
+        for (int i = 0; i < 120; ++i) eng.queueBrush (1000.0f, -1.0f, 0.6f); // cut @ 1 kHz
         float afterDn = holdRms();
         bool ok = std::isfinite (afterUp) && std::isfinite (afterDn)
                   && afterUp > before * 1.3f && afterDn < afterUp * 0.5f;
@@ -209,6 +209,39 @@ int main()
         for (int i = 0; i < block; ++i) maxDiff = juce::jmax (maxDiff, std::abs (silentDriven[i] - inputDriven[i]));
         bool ok = maxDiff < 1.0e-4f;
         printf ("[%s] feed=0 ignores input: maxDiff=%.2e\n", ok ? "PASS" : "FAIL", maxDiff);
+        fails += ok ? 0 : 1;
+    }
+
+    // 8) phase noise: when on, it perturbs the frozen output but stays finite & bounded
+    {
+        auto runNoise = [&] (bool noise, std::vector<float>& tail)
+        {
+            SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+            std::vector<float> b (block);
+            double a = 0.0, w = 2.0 * M_PI * 500.0 / sr;
+            for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+            {
+                for (int i = 0; i < block; ++i) { b[i] = 0.5f * (float) std::sin (a); a += w; }
+                e2.process (b.data(), b.data(), block, p);
+            }
+            SpectralEngine::Params f; f.feed = 0.0f; f.loss = 0.0f; f.phaseNoise = noise;
+            float mx = 0.0f;
+            for (int blk = 0; blk < 60; ++blk)
+            {
+                std::fill (b.begin(), b.end(), 0.0f);
+                e2.process (b.data(), b.data(), block, f);
+                for (int i = 0; i < block; ++i) mx = juce::jmax (mx, std::abs (b[i]));
+            }
+            tail.assign (b.begin(), b.end());
+            return mx;
+        };
+        std::vector<float> off, on;
+        runNoise (false, off);
+        float mxOn = runNoise (true, on);
+        float diff = 0.0f;
+        for (int i = 0; i < block; ++i) diff = juce::jmax (diff, std::abs (off[i] - on[i]));
+        bool ok = std::isfinite (mxOn) && mxOn < 5.0f && diff > 1.0e-4f; // changed, not exploded
+        printf ("[%s] phase noise: changes=%.2e maxAbsOn=%.3f\n", ok ? "PASS" : "FAIL", diff, mxOn);
         fails += ok ? 0 : 1;
     }
 

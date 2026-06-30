@@ -7,6 +7,7 @@ namespace
     constexpr float kDecayFloor = 1.0e-4f;
     constexpr float kInjFloor  = 0.05f;  // min injection scale (so capture works at loss=0)
     constexpr float kCompressRate = 0.05f; // per-frame strength of the compress reshaping
+    constexpr float kPhaseNoise   = 0.15f; // rad of per-frame phase jitter when noise is on
 }
 
 void SpectralEngine::prepare (double sr, int maxFftOrder)
@@ -214,8 +215,13 @@ void SpectralEngine::processFrame (const Params& p)
         std::complex<float>& xs = Xs[(size_t) k];
         xs += (x - xs) * aCoef;
 
-        // free-run phasor at the tracked frequency, inject compensated input, decay (loss)
-        std::complex<float> sk = S[(size_t) k] * std::polar (1.0f, omega[(size_t) k]);
+        // free-run phasor at the tracked frequency (+ optional phase noise injected into
+        // the frequency tracking), inject compensated input, decay (loss). The noise is
+        // per-frame and non-accumulating, so it shimmers rather than detuning permanently.
+        float w = omega[(size_t) k];
+        if (p.phaseNoise)
+            w += (rng.nextFloat() * 2.0f - 1.0f) * kPhaseNoise;
+        std::complex<float> sk = S[(size_t) k] * std::polar (1.0f, w);
         sk += feed * xs * comp;
         sk *= decay;
         S[(size_t) k] = sk;
@@ -249,10 +255,11 @@ void SpectralEngine::processFrame (const Params& p)
     }
 }
 
-void SpectralEngine::queueBrush (float centreFreqHz, float strength)
+void SpectralEngine::queueBrush (float centreFreqHz, float strength, float sigmaOct)
 {
     const juce::ScopedLock sl (brushLock);
-    brushPending.push_back ({ centreFreqHz, juce::jlimit (-1.0f, 1.0f, strength) });
+    brushPending.push_back ({ centreFreqHz, juce::jlimit (-1.0f, 1.0f, strength),
+                              juce::jmax (0.05f, sigmaOct) });
 }
 
 void SpectralEngine::drainBrush()
@@ -267,11 +274,11 @@ void SpectralEngine::drainBrush()
 
     const float refFreq = (float) sampleRate / (float) fftSize;
     const float lnFactor = std::log (kBrushMaxFactor);
-    const float invSig2  = 1.0f / (2.0f * kBrushSigmaOct * kBrushSigmaOct);
 
     for (const auto& op : brushScratch)
     {
         const float centreOct = std::log2 (juce::jmax (20.0f, op.centreFreq));
+        const float invSig2   = 1.0f / (2.0f * op.sigmaOct * op.sigmaOct);
         for (int k = 1; k < numBins; ++k)
         {
             const float oct = std::log2 ((float) k * refFreq);

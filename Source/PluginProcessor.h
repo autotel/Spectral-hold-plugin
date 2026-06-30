@@ -44,11 +44,11 @@ public:
                             double& sr, int& size);
 
     // GUI brush edit: scale the held spectrum around centreFreqHz (all channels).
-    // strength in [-1..+1]: +boost, 0 none, -cut. See SpectralEngine::queueBrush.
-    void applySpectralBrush (float centreFreqHz, float strength)
+    // strength in [-1..+1]: +boost, 0 none, -cut. sigmaOct = brush size (GUI-only).
+    void applySpectralBrush (float centreFreqHz, float strength, float sigmaOct)
     {
         for (auto& e : engines)
-            e.queueBrush (centreFreqHz, strength);
+            e.queueBrush (centreFreqHz, strength, sigmaOct);
     }
 
 private:
@@ -64,6 +64,7 @@ private:
     std::atomic<float>* pFiltT  = nullptr;
     std::atomic<float>* pAttack = nullptr;
     std::atomic<float>* pCompress = nullptr;
+    std::atomic<float>* pPhaseNoise = nullptr;
 
     // slow linked limiter state
     float limEnv  = 0.0f;

@@ -31,7 +31,15 @@
 - **Pen**: handled through the normal `mouseDown/Drag/Move` path. If the source reports
   pressure (`e.source.isPressureValid()`), `e.pressure` scales the brush strength; mouse =
   full strength. No separate pen event path needed.
-- Hovering (`mouseMove`) previews the cursor but does **not** edit; only down/drag edit.
+- **Time-based, not movement-based**: holding the button at a point keeps reshaping the wave.
+  The edit is applied each timer tick (30 Hz) in `timerCallback` while `brushHeld`; mouse
+  events only update the target position/strength. So a static press still sculpts.
+- Hovering (`mouseMove`) previews the cursor but does **not** edit; only press/hold edits.
+- **Brush size** is a GUI-only `Slider` in the editor (0.1–2.0 octaves, default 0.6) — *not*
+  an APVTS parameter, because pen/mouse editing only exists in the GUI. Its value is pushed to
+  `SpectrumDisplay::setBrushSigmaOct` and carried **per brush event** into
+  `queueBrush(centreFreq, strength, sigmaOct)`, so the DSP falloff and the on-screen cursor
+  width always match the slider.
 
 ## Data path
 - 30 Hz `Timer` calls `proc.getDisplaySnapshot()` → `SpectralEngine::copyDisplay()`,

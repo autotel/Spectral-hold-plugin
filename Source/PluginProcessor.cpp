@@ -19,6 +19,7 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pFiltT  = apvts.getRawParameterValue ("filterTone");
     pAttack = apvts.getRawParameterValue ("attack");
     pCompress = apvts.getRawParameterValue ("compress");
+    pPhaseNoise = apvts.getRawParameterValue ("phaseNoise");
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::createLayout()
@@ -49,6 +50,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "compress", 1 }, "Compress",
         NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
+
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "phaseNoise", 1 }, "Phase Noise", false));
 
     return layout;
 }
@@ -103,6 +107,7 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     p.filterTone = pFiltT->load();
     p.attack     = pAttack->load();
     p.compress   = pCompress->load();
+    p.phaseNoise = pPhaseNoise->load() > 0.5f;
 
     for (int ch = 0; ch < juce::jmin (numCh, (int) engines.size()); ++ch)
     {

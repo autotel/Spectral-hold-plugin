@@ -39,6 +39,11 @@ input stops, so the tail sustains at the captured pitch. Leakage bins of one par
 ~the same `omega`, so they stay coherent → smooth continuous tone. JUCE forward transform uses
 `exp(-i…)` and inverse `exp(+i…)`, so the measured advance is used directly as a `+omega` rotation.
 
+**Phase Noise** (boolean): when on, the rotation each frame uses `omega[k] + jitter`, with
+`jitter = ±kPhaseNoise` rad (uniform, `kPhaseNoise = 0.15`) from a per-engine `juce::Random`.
+It's injected into the *frequency tracking* (the rotation), **non-accumulating** (not stored back
+into `omega`), so it adds shimmer/roughness without permanently detuning. RT-safe (no alloc).
+
 **Feed gates the tracking.** The update is `omega[k] += (measured - omega[k]) · trackW` with
 `trackW = Feed`. This matters: the tracking is a *second* input coupling (the input retunes the
 held pitch via phase), separate from magnitude injection. If it ran unconditionally, the input

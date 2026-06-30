@@ -22,6 +22,7 @@ public:
         float filterTone = 1000.0f; // Hz, centre of the bell (log-mapped)
         float attack     = 0.0f;    // 0..1  0 = instant onset, 1 = slow onset
         float compress   = 0.0f;    // -1..+1  <0 homogenise levels, >0 expand (purify)
+        bool  phaseNoise = false;   // feed random jitter into the frequency tracking
     };
 
     void prepare (double sampleRate, int maxFftOrder);
@@ -47,10 +48,11 @@ public:
     static float filterGain (float freqHz, float toneHz, float amt);
 
     // Queue a brush edit (message thread): permanently scales the held spectrum around
-    // centreFreqHz with a gaussian falloff in log-frequency. strength in [-1..+1]:
-    // +1 strongly boosts, 0 = no change, -1 strongly cuts. Applied on the audio thread.
-    void queueBrush (float centreFreqHz, float strength);
-    static constexpr float kBrushSigmaOct = 0.6f;  // brush half-width in octaves
+    // centreFreqHz with a gaussian falloff in log-frequency of half-width sigmaOct octaves.
+    // strength in [-1..+1]: +1 strongly boosts, 0 = no change, -1 strongly cuts. Applied on
+    // the audio thread. sigmaOct is GUI-only (the brush size selector), passed per event.
+    void queueBrush (float centreFreqHz, float strength, float sigmaOct);
+    static constexpr float kBrushSigmaOct = 0.6f;  // default brush half-width in octaves
     static constexpr float kBrushMaxFactor = 8.0f; // gain factor at full strength/centre
     static constexpr float kBrushRate = 0.05f;     // per-event exponent scale (brush feel)
 
@@ -81,6 +83,7 @@ private:
     std::vector<float> expectedAdv;       // 2*pi*k*hop/N, the bin-centre advance per hop
     std::vector<float> omega;             // measured per-hop phase advance per bin (rad)
     std::vector<float> prevPhase;         // last input phase per bin, for unwrapping
+    juce::Random rng;                     // phase-noise source (audio thread only)
 
     // scratch (length 2*maxFftSize for juce real-only transform)
     std::vector<float> fftData;
@@ -91,7 +94,7 @@ private:
     std::vector<float> dispMag, dispPhase;
 
     // brush edit queue (message thread -> audio thread)
-    struct BrushOp { float centreFreq; float strength; };
+    struct BrushOp { float centreFreq; float strength; float sigmaOct; };
     juce::CriticalSection brushLock;
     std::vector<BrushOp> brushPending, brushScratch;
 

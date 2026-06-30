@@ -31,6 +31,24 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     sizeLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (sizeLabel);
 
+    addAndMakeVisible (noiseButton);
+    noiseAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        proc.apvts, "phaseNoise", noiseButton);
+
+    // Brush size: GUI-only (pen/mouse editing is GUI-only), so no APVTS parameter.
+    brushSizeSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    brushSizeSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 48, 16);
+    brushSizeSlider.setRange (0.1, 2.0, 0.01);
+    brushSizeSlider.setValue (0.6, juce::dontSendNotification);
+    brushSizeSlider.setTextValueSuffix (" oct");
+    brushSizeSlider.onValueChange = [this] { display.setBrushSigmaOct ((float) brushSizeSlider.getValue()); };
+    addAndMakeVisible (brushSizeSlider);
+    display.setBrushSigmaOct ((float) brushSizeSlider.getValue());
+
+    brushLabel.setText ("Brush", juce::dontSendNotification);
+    brushLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (brushLabel);
+
     setSize (720, 420);
 }
 
@@ -56,22 +74,28 @@ void SpectralHoldEditor::resized()
 {
     auto r = getLocalBounds();
 
-    auto top = r.removeFromTop (260);
-    display.setBounds (top.reduced (8));
+    display.setBounds (r.removeFromTop (250).reduced (8));
 
-    auto controls = r.reduced (8, 0);
+    // reserve the bottom row first so knobs never overlap it
+    auto bottom = r.removeFromBottom (30).reduced (8, 5);
+
+    // knobs in the band between display and bottom row, kept small
+    auto controls = r.reduced (8, 4);
     const int n = 6;
     const int kw = controls.getWidth() / n;
-
     Knob* knobs[n] = { &feed, &loss, &filterAmt, &filterTone, &attack, &compress };
     for (auto* k : knobs)
     {
         auto cell = controls.removeFromLeft (kw);
-        k->label.setBounds (cell.removeFromTop (18));
-        k->slider.setBounds (cell.reduced (4));
+        k->label.setBounds (cell.removeFromTop (16));
+        // square-ish, centred knob so it stays compact
+        int s = juce::jmin (cell.getWidth() - 8, cell.getHeight() - 4);
+        k->slider.setBounds (cell.withSizeKeepingCentre (s, s));
     }
 
-    auto bottom = getLocalBounds().removeFromBottom (28).reduced (8, 4);
-    sizeBox.setBounds (bottom.removeFromRight (90));
-    sizeLabel.setBounds (bottom.removeFromRight (70));
+    sizeBox.setBounds (bottom.removeFromRight (80));
+    sizeLabel.setBounds (bottom.removeFromRight (56));
+    noiseButton.setBounds (bottom.removeFromLeft (110));
+    brushLabel.setBounds (bottom.removeFromLeft (44));
+    brushSizeSlider.setBounds (bottom.removeFromLeft (170));
 }
