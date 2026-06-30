@@ -59,7 +59,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "harmonize", 1 }, "Harmonize",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        NormalisableRange<float> (0.0f, 0.1f), 0.0f));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "harmWidth", 1 }, "Harm Width",

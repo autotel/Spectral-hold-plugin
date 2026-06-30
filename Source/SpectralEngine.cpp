@@ -13,7 +13,9 @@ namespace
     constexpr float kEntRate   = 0.12f;  // per-frame fraction toward the entrainment target
     constexpr float kHarmRate  = 0.12f;  // per-frame fraction toward the harmonic target
     constexpr float kHarmStep  = 0.05f;  // clamp on per-frame omega shift (rad/hop)
-    constexpr float kPeakFloor = 0.02f;  // peak threshold as a fraction of the max magnitude
+    constexpr float kPeakFloor = 0.06f;  // peak threshold as a fraction of the max magnitude
+                                         // (> Hann's ~-31 dB first sidelobe, so leakage isn't
+                                         // mistaken for a tone)
     constexpr int   kMaxDen    = 6;      // largest harmonic ratio denominator/numerator
 }
 
@@ -344,10 +346,15 @@ void SpectralEngine::applyHarmonize (const Params& p)
     const float floor = maxMag * kPeakFloor;
 
     int P = 0;
-    for (int k = 2; k < numBins - 1 && P < kMaxPeaks; ++k)
+    for (int k = 4; k < numBins - 4 && P < kMaxPeaks; ++k)
     {
         const float a = std::abs (S[(size_t) k]);
-        if (a > floor && a >= std::abs (S[(size_t) (k - 1)]) && a >= std::abs (S[(size_t) (k + 1)]))
+        if (a <= floor) continue;
+        // prominence: must be the local max over +/-4 bins (excludes leakage sidelobes)
+        bool isPeak = true;
+        for (int o = -4; o <= 4 && isPeak; ++o)
+            if (o != 0 && std::abs (S[(size_t) (k + o)]) > a) isPeak = false;
+        if (isPeak)
         {
             peakBin[(size_t) P]   = k;
             peakAmp[(size_t) P]   = a;
@@ -433,6 +440,45 @@ void SpectralEngine::applyHarmonize (const Params& p)
             const float hi = expectedAdv[(size_t) kk] + juce::MathConstants<float>::pi;
             omega[(size_t) kk] = juce::jlimit (lo, hi, omega[(size_t) kk] + d);
         }
+    }
+
+    // 4. energy migration across bins. A single bin's phasor only represents a frequency
+    // within ~half a bin of its centre. When a peak's centre drifts past half a bin, shift
+    // its whole packet (centre +/- kPad bins) RIGIDLY by one bin, carrying each bin's complex
+    // value, omega (frequency-absolute) and phase. Shifting the packet as a unit keeps the
+    // peak coherent (moving bins independently tears it apart); omega is preserved so the
+    // pitch is continuous, and the tone can travel any distance one bin at a time.
+    const float binW = juce::MathConstants<float>::twoPi * (float) hopSize / (float) fftSize;
+    const float half = binW * 0.5f;
+    constexpr int kPad = 3; // half-width of the moved packet
+    for (int i = 0; i < P; ++i)
+    {
+        const int k = peakBin[(size_t) i];
+        const float rel = omega[(size_t) k] - expectedAdv[(size_t) k];
+        const int s = (rel > half) ? +1 : (rel < -half) ? -1 : 0;
+        if (s == 0) continue;
+        if (k - kPad < 1 || k + kPad >= numBins - 1) continue; // near edges: don't migrate
+
+        // move src -> src+s for the whole packet, ordered so we never overwrite a not-yet-moved bin
+        if (s > 0)
+            for (int b = k + kPad; b >= k - kPad; --b)
+            {
+                S[(size_t) (b + 1)]        = S[(size_t) b];
+                omega[(size_t) (b + 1)]    = omega[(size_t) b];
+                prevPhase[(size_t) (b + 1)] = prevPhase[(size_t) b];
+            }
+        else
+            for (int b = k - kPad; b <= k + kPad; ++b)
+            {
+                S[(size_t) (b - 1)]        = S[(size_t) b];
+                omega[(size_t) (b - 1)]    = omega[(size_t) b];
+                prevPhase[(size_t) (b - 1)] = prevPhase[(size_t) b];
+            }
+
+        // clear the bin vacated at the trailing edge and neutralise its omega
+        const int vac = (s > 0) ? (k - kPad) : (k + kPad);
+        S[(size_t) vac] = std::complex<float> {};
+        omega[(size_t) vac] = expectedAdv[(size_t) vac];
     }
 }
 

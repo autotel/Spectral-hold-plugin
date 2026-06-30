@@ -54,10 +54,28 @@ from `SpectralEngine::copyPeaks` (snapshotted under `displayLock` in `applyHarmo
 Peak-based: P≈tens → O(P²)·(ratio table) ≈ ~1M ops/s. Negligible. The trap is per-bin O(B²);
 don't do that.
 
-## Known limitation / next steps
-`omega`-drift only glides a tone a **modest** distance before the single-bin representation
-breaks. Great for gliding into tune / sync (cents–semitone). **Large** harmonic locks (moving a
-tone a fourth) would need **energy migration between bins** — a future stage. Tuning constants
-(`kEntRate`, `kHarmRate`, `kHarmStep`, `kPeakFloor`, `kMaxDen`, `kMaxPeaks`) live at the top of
-`SpectralEngine.cpp` / in the header. Smoke-tested by the `harmonize:` case (active + bounded);
-convergence itself is judged by ear.
+## Energy migration (step 4 — lets tones cross bins for big moves)
+`omega` alone only represents a frequency within ~±2 bins of its home bin (phase-advance
+range). To move a tone further, the **energy itself** must walk across bins:
+- A bin's `omega` is frequency-absolute, so the *same* `omega` value in an adjacent bin plays
+  the *same* pitch — moving energy between bins (carrying `omega`) is sonically transparent.
+- When a peak's centre drifts past **half a bin** (`rel > binW/2`), its whole packet
+  (centre ± `kPad` bins) is shifted **rigidly** by one bin, carrying each bin's `S`, `omega`
+  and `prevPhase`. Rigid (whole-packet) is essential: migrating bins *independently* tears the
+  coherent peak apart (it splits into two). After the shift the centre's `rel` drops by one
+  bin, so it can keep drifting and migrate again — unlimited travel, one bin at a time.
+- This is why **peak detection matters**: `kPeakFloor` (0.06, above Hann's ~-31 dB sidelobe)
+  plus a ±4-bin prominence test keep leakage from being mistaken for tones (which would
+  scatter energy). Don't lower the floor without re-checking.
+
+Verified by the `energy migration:` test: a weak tone is pulled to a strong anchor's 4/3
+harmonic and lands **below** its omega-only floor (1400 → ~1371 Hz, past ~1383), proving the
+energy actually moved bins.
+
+## Tuning / next steps
+Constants at the top of `SpectralEngine.cpp`: `kEntRate`, `kHarmRate`, `kHarmStep`,
+`kPeakFloor`, `kMaxDen`, `kMaxPeaks`, and `kPad` (migration packet half-width). The GUI
+`harmonize` range is intentionally small (0..0.1) — the drift is strong, so a little goes a
+long way. Possible next steps: persistent peak *tracking* (identity across frames) for cleaner
+migration under dense spectra, and handling packet *collisions* when two tones migrate into
+each other.

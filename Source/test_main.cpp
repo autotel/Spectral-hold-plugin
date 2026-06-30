@@ -282,6 +282,33 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // 10) energy migration: a tone pulled toward a far harmonic crosses bins (> omega-only
+    //     reach ~2 bins / ~23 Hz at 4096/48k), proving the energy actually moved.
+    {
+        SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+        std::vector<float> b (block);
+        // dominant fixed anchor at 1000, weak tone at 1400 (-> nearest ratio 4/3 -> 1333 Hz)
+        double a = 0.0, c = 0.0, wa = 2.0 * M_PI * 1400.0 / sr, wc = 2.0 * M_PI * 1000.0 / sr;
+        for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+        {
+            for (int i = 0; i < block; ++i) { b[i] = 0.1f * (float) std::sin (a) + 0.9f * (float) std::sin (c); a += wa; c += wc; }
+            e2.process (b.data(), b.data(), block, p);
+        }
+        SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.harmonize = 1.0f; h.harmonic = 1.0f; h.harmWidth = 1.5f;
+        for (int blk = 0; blk < 600; ++blk) { std::fill (b.begin(), b.end(), 0.0f); e2.process (b.data(), b.data(), block, h); }
+
+        std::vector<float> pf, pw, pd; int n = 0;
+        for (int t = 0; t < 8 && n <= 0; ++t) { std::fill (b.begin(), b.end(), 0.0f); e2.process (b.data(), b.data(), block, h); n = e2.copyPeaks (pf, pw, pd); }
+        // the weak tone tracks the anchor's harmonic (~4/3). It must drop below the
+        // omega-only floor (~1383 Hz for its home bin) to prove energy actually migrated.
+        float weak = 1400.0f;
+        for (int i = 0; i < n; ++i) if (pf[(size_t) i] > 1250.0f && pf[(size_t) i] < 1395.0f) weak = pf[(size_t) i];
+        bool ok = n > 0 && weak < 1382.0f;
+        printf ("[%s] energy migration: weak tone 1400 -> %.0f Hz (past omega-only floor)\n",
+                ok ? "PASS" : "FAIL", weak);
+        fails += ok ? 0 : 1;
+    }
+
     printf ("\n%s (%d failure%s)\n", fails == 0 ? "ALL PASS" : "FAILURES",
             fails, fails == 1 ? "" : "s");
     return fails == 0 ? 0 : 1;
