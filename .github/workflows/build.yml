@@ -1,0 +1,86 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  name: Linux }
+          - { os: macos-latest,   name: macOS }
+          - { os: windows-2022,   name: Windows }
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+        with:
+          path: plugin
+
+      - name: Checkout JUCE 8.0.12
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: 8.0.12
+          path: JUCE
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libx11-dev libxext-dev libxinerama-dev \
+            libxrandr-dev libxcursor-dev libfreetype6-dev libgl1-mesa-dev
+
+      - name: Configure
+        run: >
+          cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release
+          -DJUCE_PATH=${{ github.workspace }}/JUCE
+
+      - name: Build VST3 + Standalone + DSP test
+        run: >
+          cmake --build plugin/build --config Release --parallel
+          --target SpectralHold_VST3 SpectralHold_Standalone SpectralHoldTest
+
+      - name: Run DSP smoke-test (Unix)
+        if: runner.os != 'Windows'
+        run: plugin/build/SpectralHoldTest_artefacts/Release/SpectralHoldTest
+
+      - name: Run DSP smoke-test (Windows)
+        if: runner.os == 'Windows'
+        run: plugin/build/SpectralHoldTest_artefacts/Release/SpectralHoldTest.exe
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpectralHold-VST3-${{ matrix.name }}
+          path: plugin/build/SpectralHold_artefacts/Release/VST3/Spectral Hold.vst3
+
+      - name: Upload Standalone (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpectralHold-Standalone-Linux
+          path: plugin/build/SpectralHold_artefacts/Release/Standalone/Spectral Hold
+
+      - name: Upload Standalone (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpectralHold-Standalone-macOS
+          path: plugin/build/SpectralHold_artefacts/Release/Standalone/Spectral Hold.app
+
+      - name: Upload Standalone (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpectralHold-Standalone-Windows
+          path: plugin/build/SpectralHold_artefacts/Release/Standalone/Spectral Hold.exe
