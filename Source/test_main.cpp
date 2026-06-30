@@ -5,6 +5,10 @@
 #include <cstdio>
 #include <cmath>
 
+#ifndef M_PI
+constexpr double M_PI = 3.14159265358979323846; // MSVC doesn't define it
+#endif
+
 static bool finiteAll (const float* x, int n)
 {
     for (int i = 0; i < n; ++i)
