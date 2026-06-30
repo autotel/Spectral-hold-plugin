@@ -72,6 +72,22 @@ void SpectralHoldProcessor::prepareToPlay (double sampleRate, int)
     limEnv = 0.0f;
     limGain = 1.0f;
     prepared = true;
+
+    // apply any held audio state that was restored from a preset before we were prepared
+    if (pendingAudioState.getSize() > 0)
+    {
+        applyAudioState (pendingAudioState);
+        pendingAudioState.reset();
+    }
+}
+
+void SpectralHoldProcessor::applyAudioState (const juce::MemoryBlock& mb)
+{
+    juce::MemoryInputStream is (mb, false);
+    const int nEng = is.readInt();
+    const juce::ScopedLock sl (audioStateLock);
+    for (int i = 0; i < nEng && i < (int) engines.size(); ++i)
+        engines[(size_t) i].readAudioState (is);
 }
 
 bool SpectralHoldProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -195,14 +211,18 @@ void SpectralHoldProcessor::setStateInformation (const void* data, int size)
     const int ord = (int) tree.getProperty ("fftOrder", fftOrder.load());
     setFftOrder (ord);
 
+    pendingAudioState.reset();
     if (auto* mbv = tree.getPropertyPointer ("audioState"))
         if (auto* mb = mbv->getBinaryData())
         {
-            juce::MemoryInputStream is (*mb, false);
-            const int nEng = is.readInt();
-            const juce::ScopedLock sl (audioStateLock);
-            for (int i = 0; i < nEng && i < (int) engines.size(); ++i)
-                engines[(size_t) i].readAudioState (is);
+            // The host may call this BEFORE prepareToPlay (engine buffers not allocated yet),
+            // so stash it and apply once prepared. If we're already prepared, apply now.
+            pendingAudioState = *mb;
+            if (prepared)
+            {
+                applyAudioState (pendingAudioState);
+                pendingAudioState.reset();
+            }
         }
 }
 

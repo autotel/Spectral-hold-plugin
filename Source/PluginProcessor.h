@@ -79,6 +79,11 @@ private:
     bool saveWithSound = false;
     juce::CriticalSection audioStateLock; // guards engine state vs. preset restore
 
+    // Held audio state restored from a preset but waiting for prepareToPlay (the host may call
+    // setStateInformation BEFORE prepareToPlay, when the engine buffers don't exist yet).
+    juce::MemoryBlock pendingAudioState;
+    void applyAudioState (const juce::MemoryBlock&);
+
     // slow linked limiter state
     float limEnv  = 0.0f;
     float limGain = 1.0f;
