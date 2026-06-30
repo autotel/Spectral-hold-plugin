@@ -1,4 +1,5 @@
 #include "SpectralEngine.h"
+#include <numeric> // std::gcd
 
 namespace
 {
@@ -8,6 +9,12 @@ namespace
     constexpr float kInjFloor  = 0.05f;  // min injection scale (so capture works at loss=0)
     constexpr float kCompressRate = 0.05f; // per-frame strength of the compress reshaping
     constexpr float kPhaseNoise   = 0.15f; // rad of per-frame phase jitter when noise is on
+    // harmonize
+    constexpr float kEntRate   = 0.12f;  // per-frame fraction toward the entrainment target
+    constexpr float kHarmRate  = 0.12f;  // per-frame fraction toward the harmonic target
+    constexpr float kHarmStep  = 0.05f;  // clamp on per-frame omega shift (rad/hop)
+    constexpr float kPeakFloor = 0.02f;  // peak threshold as a fraction of the max magnitude
+    constexpr int   kMaxDen    = 6;      // largest harmonic ratio denominator/numerator
 }
 
 void SpectralEngine::prepare (double sr, int maxFftOrder)
@@ -21,6 +28,10 @@ void SpectralEngine::prepare (double sr, int maxFftOrder)
     dispScratch.assign ((size_t) (maxFftSize / 2 + 1), {});
     brushPending.reserve (256);
     brushScratch.reserve (256);
+    peakBin.assign   ((size_t) kMaxPeaks, 0);
+    peakFreq.assign  ((size_t) kMaxPeaks, 0.0f);
+    peakAmp.assign   ((size_t) kMaxPeaks, 0.0f);
+    peakDelta.assign ((size_t) kMaxPeaks, 0.0f);
     inRing.assign  ((size_t) maxFftSize, 0.0f);
     outRing.assign ((size_t) maxFftSize, 0.0f);
     window.assign  ((size_t) maxFftSize, 0.0f);
@@ -167,6 +178,9 @@ void SpectralEngine::processFrame (const Params& p)
         }
     }
 
+    // --- harmonize: tones pull on each other's pitch (coupled oscillators)
+    applyHarmonize (p);
+
     // --- per-hop scalars
     // loss -> decay multiplier per hop. loss=0 -> 1 (eternal), loss=1 -> fast.
     const float lossDecay = std::exp (-p.loss * (float) hopSize / (float) sampleRate * 6.0f);
@@ -292,6 +306,111 @@ void SpectralEngine::drainBrush()
         }
     }
     brushScratch.clear();
+}
+
+void SpectralEngine::applyHarmonize (const Params& p)
+{
+    if (p.harmonize <= 1.0e-4f && p.harmonic <= 1.0e-4f)
+        return;
+
+    // low-denominator harmonic ratios (built once): value, log2(value), weight 1/(n*m)
+    struct Ratio { float l2, invDen; };
+    static const std::vector<Ratio> ratios = []
+    {
+        std::vector<Ratio> r;
+        for (int n = 1; n <= kMaxDen; ++n)
+            for (int m = 1; m <= kMaxDen; ++m)
+                if (std::gcd (n, m) == 1)
+                    r.push_back ({ std::log2 ((float) n / (float) m), 1.0f / (float) (n * m) });
+        return r;
+    }();
+
+    // omega (rad/hop) <-> frequency (Hz): f = omega * fScale
+    const float fScale = (float) sampleRate / ((float) hopSize * juce::MathConstants<float>::twoPi);
+
+    // 1. extract significant spectral peaks (local maxima)
+    float maxMag = 0.0f;
+    for (int k = 1; k < numBins; ++k) maxMag = juce::jmax (maxMag, std::abs (S[(size_t) k]));
+    if (maxMag < 1.0e-9f) return;
+    const float floor = maxMag * kPeakFloor;
+
+    int P = 0;
+    for (int k = 2; k < numBins - 1 && P < kMaxPeaks; ++k)
+    {
+        const float a = std::abs (S[(size_t) k]);
+        if (a > floor && a >= std::abs (S[(size_t) (k - 1)]) && a >= std::abs (S[(size_t) (k + 1)]))
+        {
+            peakBin[(size_t) P]   = k;
+            peakAmp[(size_t) P]   = a;
+            peakFreq[(size_t) P]  = omega[(size_t) k] * fScale;
+            peakDelta[(size_t) P] = 0.0f;
+            ++P;
+        }
+    }
+    if (P < 2) return;
+
+    const float invSig2 = 1.0f / (2.0f * juce::jmax (0.02f, p.harmWidth) * p.harmWidth);
+
+    // 2. reciprocal pull: compute every peak's drift from the same snapshot
+    for (int i = 0; i < P; ++i)
+    {
+        const float fi = peakFreq[(size_t) i];
+        if (fi <= 0.0f) continue;
+        double entNum = 0.0, entDen = 0.0, harmNum = 0.0, harmDen = 0.0;
+
+        for (int j = 0; j < P; ++j)
+        {
+            if (j == i) continue;
+            const float fj = peakFreq[(size_t) j];
+            if (fj <= 0.0f) continue;
+
+            const float doct = std::log2 (fj / fi);
+            const float w    = std::exp (-doct * doct * invSig2);
+            const float aw   = w * peakAmp[(size_t) j];
+
+            // entrainment: drift toward neighbours (amplitude-weighted average)
+            entNum += aw * (fj - fi);
+            entDen += aw;
+
+            // harmonic: drift toward fj * (nearest low-denominator ratio)
+            if (p.harmonic > 1.0e-4f)
+            {
+                const float lr = std::log2 (fi / fj);
+                float bestL2 = 0.0f, bestInv = 0.0f, bestDist = 1.0e9f;
+                for (const auto& r : ratios)
+                {
+                    const float d = std::abs (r.l2 - lr);
+                    if (d < bestDist) { bestDist = d; bestL2 = r.l2; bestInv = r.invDen; }
+                }
+                const float target = fj * std::exp2 (bestL2);
+                const float hw = aw * bestInv;
+                harmNum += hw * (target - fi);
+                harmDen += hw;
+            }
+        }
+
+        float df = 0.0f;
+        if (entDen  > 0.0) df += p.harmonize * kEntRate  * (float) (entNum  / entDen);
+        if (harmDen > 0.0) df += p.harmonic  * kHarmRate * (float) (harmNum / harmDen);
+
+        peakDelta[(size_t) i] = juce::jlimit (-kHarmStep, kHarmStep, df / fScale); // -> rad/hop
+    }
+
+    // 3. apply the shift to each peak's bin and its immediate leakage neighbours
+    for (int i = 0; i < P; ++i)
+    {
+        const int   k = peakBin[(size_t) i];
+        const float d = peakDelta[(size_t) i];
+        if (d == 0.0f) continue;
+        for (int o = -2; o <= 2; ++o)
+        {
+            const int kk = k + o;
+            if (kk < 1 || kk >= numBins) continue;
+            const float lo = expectedAdv[(size_t) kk] - juce::MathConstants<float>::pi;
+            const float hi = expectedAdv[(size_t) kk] + juce::MathConstants<float>::pi;
+            omega[(size_t) kk] = juce::jlimit (lo, hi, omega[(size_t) kk] + d);
+        }
+    }
 }
 
 int SpectralEngine::copyDisplay (std::vector<float>& mag, std::vector<float>& phase)

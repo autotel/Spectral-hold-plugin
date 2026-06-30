@@ -23,6 +23,10 @@ public:
         float attack     = 0.0f;    // 0..1  0 = instant onset, 1 = slow onset
         float compress   = 0.0f;    // -1..+1  <0 homogenise levels, >0 expand (purify)
         bool  phaseNoise = false;   // feed random jitter into the frequency tracking
+        // --- experimental: harmonize (coupled-oscillator tone interaction) ---
+        float harmonize  = 0.0f;    // 0..1  entrainment: tones drift to amplitude-weighted mean
+        float harmWidth  = 0.5f;    // octaves, sigma of the nearness-influence curve
+        float harmonic   = 0.0f;    // 0..1  attraction toward low-denominator harmonic ratios
     };
 
     void prepare (double sampleRate, int maxFftOrder);
@@ -61,6 +65,7 @@ private:
     void configure (int fftOrder);
     void processFrame (const Params& p);
     void drainBrush();
+    void applyHarmonize (const Params& p);
 
     double sampleRate = 44100.0;
     int maxFftSize = 0, maxOrder = 0;
@@ -84,6 +89,11 @@ private:
     std::vector<float> omega;             // measured per-hop phase advance per bin (rad)
     std::vector<float> prevPhase;         // last input phase per bin, for unwrapping
     juce::Random rng;                     // phase-noise source (audio thread only)
+
+    // harmonize peak scratch (preallocated; capped at kMaxPeaks)
+    static constexpr int kMaxPeaks = 128;
+    std::vector<int>   peakBin;
+    std::vector<float> peakFreq, peakAmp, peakDelta;
 
     // scratch (length 2*maxFftSize for juce real-only transform)
     std::vector<float> fftData;

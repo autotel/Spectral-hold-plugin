@@ -249,6 +249,39 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // 9) harmonize: with two close tones held, it perturbs the output but stays bounded
+    {
+        auto runHarm = [&] (float amount, std::vector<float>& tail)
+        {
+            SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+            std::vector<float> b (block);
+            double a = 0.0, c = 0.0, wa = 2.0 * M_PI * 400.0 / sr, wc = 2.0 * M_PI * 520.0 / sr;
+            for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+            {
+                for (int i = 0; i < block; ++i) { b[i] = 0.4f * (float) std::sin (a) + 0.4f * (float) std::sin (c); a += wa; c += wc; }
+                e2.process (b.data(), b.data(), block, p);
+            }
+            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.harmonize = amount; h.harmWidth = 1.0f;
+            float mx = 0.0f;
+            for (int blk = 0; blk < 80; ++blk)
+            {
+                std::fill (b.begin(), b.end(), 0.0f);
+                e2.process (b.data(), b.data(), block, h);
+                for (int i = 0; i < block; ++i) mx = juce::jmax (mx, std::abs (b[i]));
+            }
+            tail.assign (b.begin(), b.end());
+            return mx;
+        };
+        std::vector<float> off, on;
+        runHarm (0.0f, off);
+        float mxOn = runHarm (1.0f, on);
+        float diff = 0.0f;
+        for (int i = 0; i < block; ++i) diff = juce::jmax (diff, std::abs (off[i] - on[i]));
+        bool ok = std::isfinite (mxOn) && mxOn < 5.0f && diff > 1.0e-4f;
+        printf ("[%s] harmonize: changes=%.2e maxAbsOn=%.3f\n", ok ? "PASS" : "FAIL", diff, mxOn);
+        fails += ok ? 0 : 1;
+    }
+
     printf ("\n%s (%d failure%s)\n", fails == 0 ? "ALL PASS" : "FAILURES",
             fails, fails == 1 ? "" : "s");
     return fails == 0 ? 0 : 1;

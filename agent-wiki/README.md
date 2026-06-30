@@ -21,6 +21,8 @@ held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, 
 - [gui-display.md](gui-display.md) — the custom "lighting" spectrum view.
 - [build-and-test.md](build-and-test.md) — configure, build, run the offline test.
 - [gotchas.md](gotchas.md) — traps, decisions already made, things that look like bugs but aren't.
+- [harmonize.md](harmonize.md) — **experimental** (branch `experimental/harmonize`): coupled-
+  oscillator tone interaction (entrainment + harmonic attraction).
 
 ## Fast facts
 - JUCE lives at `../JUCE` (sibling of repo root), used via `add_subdirectory`. Modern

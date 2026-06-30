@@ -65,6 +65,9 @@ private:
     std::atomic<float>* pAttack = nullptr;
     std::atomic<float>* pCompress = nullptr;
     std::atomic<float>* pPhaseNoise = nullptr;
+    std::atomic<float>* pHarmonize = nullptr;
+    std::atomic<float>* pHarmWidth = nullptr;
+    std::atomic<float>* pHarmonic  = nullptr;
 
     // slow linked limiter state
     float limEnv  = 0.0f;

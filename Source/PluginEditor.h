@@ -31,7 +31,7 @@ private:
 
     SpectrumDisplay display;
 
-    Knob feed, loss, filterAmt, filterTone, attack, compress;
+    Knob feed, loss, filterAmt, filterTone, attack, compress, harmonize, harmWidth, harmonic;
 
     juce::Label    sizeLabel;
     juce::ComboBox sizeBox;

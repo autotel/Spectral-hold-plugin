@@ -12,6 +12,9 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (filterTone, "filterTone", "Tone");
     setupKnob (attack,     "attack",     "Attack");
     setupKnob (compress,   "compress",   "Compress");
+    setupKnob (harmonize,  "harmonize",  "Harmonize");
+    setupKnob (harmWidth,  "harmWidth",  "Width");
+    setupKnob (harmonic,   "harmonic",   "Harmonic");
 
     // FFT size: GUI-only (not a DAW parameter).
     addAndMakeVisible (sizeBox);
@@ -50,7 +53,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     brushLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (brushLabel);
 
-    setSize (720, 420);
+    setSize (980, 420);
 }
 
 SpectralHoldEditor::~SpectralHoldEditor()
@@ -91,9 +94,10 @@ void SpectralHoldEditor::resized()
 
     // knobs in the band between display and bottom row, kept small
     auto controls = r.reduced (8, 4);
-    const int n = 6;
+    const int n = 9;
     const int kw = controls.getWidth() / n;
-    Knob* knobs[n] = { &feed, &loss, &filterAmt, &filterTone, &attack, &compress };
+    Knob* knobs[n] = { &feed, &loss, &filterAmt, &filterTone, &attack, &compress,
+                       &harmonize, &harmWidth, &harmonic };
     for (auto* k : knobs)
     {
         auto cell = controls.removeFromLeft (kw);
