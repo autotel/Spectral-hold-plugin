@@ -369,27 +369,48 @@ void SpectralEngine::applyHarmonize (const Params& p)
     }
     if (P < 2) return;
 
-    // 1b. lock near-unison peaks to the SAME exact frequency. Two tones that have entrained
-    // to within ~a bin still sit a hair mistuned and beat forever (the interference that never
-    // resolves). Forcing their omega equal makes the two phasors advance in lockstep, so their
-    // sum is steady (a fixed comb, no time-varying beat). We don't move energy (that fights the
-    // multi-bin leakage); we only equalise frequency. Frequency-based so it catches same-pitch
-    // peaks regardless of which bins hold them.
-    const float lockTolHz = (float) sampleRate / (float) fftSize * 2.0f;
+    // 1b. merge near-unison peaks into one centred phasor. Two tones that have entrained to
+    // within ~a bin still sit a hair mistuned and beat forever. Just equalising their frequency
+    // is not enough: a phasor stored away from its bin centre produces an amplitude ripple from
+    // the overlap-add (itself a beat). So we sum their energy into the single bin nearest the
+    // common frequency and clear both packets — one centred phasor = clean, steady, no beat.
+    constexpr int kPad = 3;                                    // packet half-width (shared with migration)
+    const float binHz = (float) sampleRate / (float) fftSize;
+    const float lockTolHz = binHz * 2.0f;
     for (int i = 0; i < P; ++i)
-        for (int j = i + 1; j < P; ++j)
+        for (int j = i + 1; j < P; )
         {
-            if (std::abs (peakFreq[(size_t) i] - peakFreq[(size_t) j]) >= lockTolHz)
-                continue;
-            const float wi = peakAmp[(size_t) i], wj = peakAmp[(size_t) j];
-            const float mo = (wi * omega[(size_t) peakBin[(size_t) i]]
-                            + wj * omega[(size_t) peakBin[(size_t) j]]) / (wi + wj + 1.0e-12f);
-            for (int p2 : { peakBin[(size_t) i], peakBin[(size_t) j] })
-                for (int o = -1; o <= 1; ++o)
-                    if (p2 + o >= 1 && p2 + o < numBins)
-                        omega[(size_t) (p2 + o)] = mo;
-            peakFreq[(size_t) i] = peakFreq[(size_t) j] = mo * fScale;
+            if (std::abs (peakFreq[(size_t) i] - peakFreq[(size_t) j]) >= lockTolHz) { ++j; continue; }
+
+            const int bi = peakBin[(size_t) i], bj = peakBin[(size_t) j];
+            const float wi = std::abs (S[(size_t) bi]), wj = std::abs (S[(size_t) bj]);
+            const float mo = (wi * omega[(size_t) bi] + wj * omega[(size_t) bj]) / (wi + wj + 1.0e-12f);
+            const std::complex<float> combined = S[(size_t) bi] + S[(size_t) bj];
+            const int target = juce::jlimit (1, numBins - 2, (int) std::lround (mo * fScale / binHz));
+
+            for (int base : { bi, bj })
+                for (int o = -kPad; o <= kPad; ++o)
+                {
+                    const int idx = base + o;
+                    if (idx >= 1 && idx < numBins)
+                    {
+                        S[(size_t) idx]     = std::complex<float> {};
+                        omega[(size_t) idx] = expectedAdv[(size_t) idx];
+                    }
+                }
+            S[(size_t) target]     = combined;
+            omega[(size_t) target] = mo;
+
+            peakBin[(size_t) i]  = target;
+            peakAmp[(size_t) i]  = std::abs (combined);
+            peakFreq[(size_t) i] = mo * fScale;
+            --P; // swap-remove peak j
+            peakBin[(size_t) j]  = peakBin[(size_t) P];
+            peakAmp[(size_t) j]  = peakAmp[(size_t) P];
+            peakFreq[(size_t) j] = peakFreq[(size_t) P];
+            peakDelta[(size_t) j] = peakDelta[(size_t) P];
         }
+    if (P < 1) return;
 
     const float invSig2 = 1.0f / (2.0f * juce::jmax (0.005f, p.harmWidth) * p.harmWidth);
 
@@ -476,7 +497,6 @@ void SpectralEngine::applyHarmonize (const Params& p)
     // pitch is continuous, and the tone can travel any distance one bin at a time.
     const float binW = juce::MathConstants<float>::twoPi * (float) hopSize / (float) fftSize;
     const float half = binW * 0.5f;
-    constexpr int kPad = 3; // half-width of the moved packet
     for (int i = 0; i < P; ++i)
     {
         const int k = peakBin[(size_t) i];
@@ -484,6 +504,15 @@ void SpectralEngine::applyHarmonize (const Params& p)
         const int s = (rel > half) ? +1 : (rel < -half) ? -1 : 0;
         if (s == 0) continue;
         if (k - kPad < 1 || k + kPad >= numBins - 1) continue; // near edges: don't migrate
+
+        // collision avoidance: if another peak is within two packet widths, don't migrate.
+        // Overlapping packets would trample each other (smearing the energy). Such pairs are
+        // already frequency-locked above, so leaving the energy put gives a steady sum.
+        bool nearNeighbour = false;
+        for (int j = 0; j < P && ! nearNeighbour; ++j)
+            if (j != i && std::abs (peakBin[(size_t) j] - k) <= 2 * kPad)
+                nearNeighbour = true;
+        if (nearNeighbour) continue;
 
         // move src -> src+s for the whole packet, ordered so we never overwrite a not-yet-moved bin
         if (s > 0)

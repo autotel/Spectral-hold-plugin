@@ -86,22 +86,27 @@ cause: locking to a simple harmonic ratio (3/2, 4/3…) gives a **short** common
 interference is fast — perceived as timbre, not as audible beating. Short-period interference is
 not a sign of inharmonicity, so harmonic ratios don't need "fixing".
 
-## Unison lock (why slow beating eventually stops)
+## Unison merge (why slow beating eventually stops)
 Two tones entrained to *almost* the same frequency would otherwise sit a hair mistuned and
 **beat forever** (a slow, audible beat) — each tone is a separate per-bin phasor, and the
-detector stops resolving them as two before they reach exact unison, so entrainment stalls.
-Fix: when two peaks are
-within `lockTolHz` (~1.5 bins) in frequency, **lock their `omega` to the common
-(amplitude-weighted) value**. Identical `omega` → the two phasors advance in lockstep → their
-sum is steady → no time-varying beat (a fixed comb may remain; that's inherent to two phasors
-in different bins). We deliberately **don't** merge/move energy — that fought the multi-bin
-leakage (tones just settled at the tolerance and kept beating). Peak detection uses a narrow
-±2-bin prominence so near tones stay resolved as two and keep entraining until the lock catches
-them. Verified by the `unison lock:` test (beat depth 0.73 → ~0.14).
+detector stops resolving them as two before they reach exact unison.
 
-Caveat: this is *frequency* lock, not true sinusoid merging. Truly collapsing two tones into
-one (and guaranteeing zero residual) would need a sinusoidal-model rewrite (track tones as
-amplitude/freq/phase objects and resynthesise) — noted as a possible future stage.
+Fix (step 1b): when two peaks are within `lockTolHz` (~2 bins) in frequency, **sum their energy
+into the single bin nearest the common (amplitude-weighted) frequency, and clear both packets**.
+The result is **one centred phasor**.
+
+Two earlier attempts and why they failed (don't repeat them):
+- *Frequency lock only* (equalise `omega`, leave energy in place): a phasor stored away from its
+  bin centre produces an **amplitude ripple** from the overlap-add — itself a beat. So leaving
+  the two clusters apart at the same frequency still beats.
+- *Bin-distance merge*: tones could be the same pitch yet several storage bins apart; bin
+  distance missed them. Merge on **frequency**, and place the result at the bin **nearest** that
+  frequency so it's centred (no ripple) and clear ±`kPad` around both sources so leakage doesn't
+  re-form a ghost peak.
+
+Migration (step 4) also has **collision avoidance**: it skips any peak with another peak within
+`2·kPad` bins, because overlapping rigid packets would trample each other. Near pairs are handled
+by the merge instead. Verified by the `unison lock:` test (beat depth **0.73 → ~0.07**).
 
 ## Tuning / next steps
 Constants at the top of `SpectralEngine.cpp`: `kEntRate`, `kHarmRate`, `kHarmStep`,
