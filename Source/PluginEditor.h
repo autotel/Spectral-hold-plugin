@@ -31,13 +31,17 @@ private:
 
     SpectrumDisplay display;
 
-    Knob feed, loss, filterAmt, filterTone, attack, compress, harmonize, harmWidth, harmonic;
+    Knob feed, loss, output, compress, filterAmt, filterTone, harmonize, harmWidth, harmonic;
 
     juce::Label    sizeLabel;
     juce::ComboBox sizeBox;
 
     juce::ToggleButton noiseButton { "Phase Noise" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> noiseAttach;
+
+    // GUI-only switches (persisted by the processor, not DAW parameters)
+    juce::ToggleButton liveButton { "Live (0 PDC)" };
+    juce::ToggleButton saveSoundButton { "Save sound" };
 
     juce::Label  brushLabel;
     juce::Slider brushSizeSlider; // GUI-only brush size, not a DAW parameter

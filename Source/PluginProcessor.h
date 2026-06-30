@@ -39,6 +39,14 @@ public:
     void setFftOrder (int order);
     int  getFftOrder() const { return fftOrder.load(); }
 
+    // GUI-only switches (persisted in state, not DAW parameters):
+    // - liveMode: report 0 latency (PDC) so the host doesn't delay-compensate, for live use.
+    // - saveWithSound: include the held spectral state in the saved preset.
+    void setLiveMode (bool b);
+    bool getLiveMode() const      { return liveMode; }
+    void setSaveWithSound (bool b) { saveWithSound = b; }
+    bool getSaveWithSound() const  { return saveWithSound; }
+
     // Snapshot for the spectrum display (channel 0). Returns numBins or 0.
     int getDisplaySnapshot (std::vector<float>& mag, std::vector<float>& phase,
                             double& sr, int& size);
@@ -67,14 +75,19 @@ private:
     // cached param pointers
     std::atomic<float>* pFeed   = nullptr;
     std::atomic<float>* pLoss   = nullptr;
+    std::atomic<float>* pOutput = nullptr;
     std::atomic<float>* pFiltA  = nullptr;
     std::atomic<float>* pFiltT  = nullptr;
-    std::atomic<float>* pAttack = nullptr;
     std::atomic<float>* pCompress = nullptr;
     std::atomic<float>* pPhaseNoise = nullptr;
     std::atomic<float>* pHarmonize = nullptr;
     std::atomic<float>* pHarmWidth = nullptr;
     std::atomic<float>* pHarmonic  = nullptr;
+
+    // GUI-only switches (persisted manually, see get/setStateInformation)
+    bool liveMode = false;
+    bool saveWithSound = false;
+    juce::CriticalSection audioStateLock; // guards engine state vs. preset restore
 
     // slow linked limiter state
     float limEnv  = 0.0f;

@@ -8,10 +8,10 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
 
     setupKnob (feed,       "feed",       "Feed");
     setupKnob (loss,       "loss",       "Loss");
+    setupKnob (output,     "output",     "Output");
+    setupKnob (compress,   "compress",   "Compress");
     setupKnob (filterAmt,  "filterAmt",  "Filter");
     setupKnob (filterTone, "filterTone", "Tone");
-    setupKnob (attack,     "attack",     "Attack");
-    setupKnob (compress,   "compress",   "Compress");
     setupKnob (harmonize,  "harmonize",  "Harmonize");
     setupKnob (harmWidth,  "harmWidth",  "Width");
     setupKnob (harmonic,   "harmonic",   "Harmonic");
@@ -53,7 +53,16 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     brushLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (brushLabel);
 
-    setSize (980, 420);
+    // GUI-only switches
+    liveButton.setToggleState (proc.getLiveMode(), juce::dontSendNotification);
+    liveButton.onClick = [this] { proc.setLiveMode (liveButton.getToggleState()); };
+    addAndMakeVisible (liveButton);
+
+    saveSoundButton.setToggleState (proc.getSaveWithSound(), juce::dontSendNotification);
+    saveSoundButton.onClick = [this] { proc.setSaveWithSound (saveSoundButton.getToggleState()); };
+    addAndMakeVisible (saveSoundButton);
+
+    setSize (1040, 420);
 }
 
 SpectralHoldEditor::~SpectralHoldEditor()
@@ -96,7 +105,7 @@ void SpectralHoldEditor::resized()
     auto controls = r.reduced (8, 4);
     const int n = 9;
     const int kw = controls.getWidth() / n;
-    Knob* knobs[n] = { &feed, &loss, &filterAmt, &filterTone, &attack, &compress,
+    Knob* knobs[n] = { &feed, &loss, &output, &compress, &filterAmt, &filterTone,
                        &harmonize, &harmWidth, &harmonic };
     for (auto* k : knobs)
     {
@@ -108,8 +117,10 @@ void SpectralHoldEditor::resized()
     }
 
     sizeBox.setBounds (bottom.removeFromRight (80));
-    sizeLabel.setBounds (bottom.removeFromRight (56));
-    noiseButton.setBounds (bottom.removeFromLeft (110));
-    brushLabel.setBounds (bottom.removeFromLeft (44));
-    brushSizeSlider.setBounds (bottom.removeFromLeft (170));
+    sizeLabel.setBounds (bottom.removeFromRight (50));
+    noiseButton.setBounds (bottom.removeFromLeft (100));
+    liveButton.setBounds (bottom.removeFromLeft (96));
+    saveSoundButton.setBounds (bottom.removeFromLeft (96));
+    brushSizeSlider.setBounds (bottom.removeFromRight (150));
+    brushLabel.setBounds (bottom.removeFromRight (44));
 }

@@ -50,6 +50,11 @@ public:
     // current pitch drift (Hz, signed). Returns the peak count (0 when harmonize is off).
     int copyPeaks (std::vector<float>& freq, std::vector<float>& weight, std::vector<float>& drift);
 
+    // Serialize / restore the held spectral state (for "save preset with the ongoing sound").
+    // NOT real-time safe: call with processing stopped or under an external lock.
+    void writeAudioState (juce::MemoryOutputStream&) const;
+    void readAudioState  (juce::MemoryInputStream&);
+
     // Gaussian bell shaping gain in [1-amt .. 1] at a given frequency. Shared with
     // the GUI so the displayed filter curve matches the DSP exactly. fft-size independent.
     static constexpr float kSigmaOct = 1.25f; // bell half-width, octaves

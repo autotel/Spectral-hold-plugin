@@ -3,16 +3,26 @@
 DAW-facing parameters are defined in `SpectralHoldProcessor::createLayout()`.
 The engine consumes them via `SpectralEngine::Params`. FFT size is separate (GUI-only).
 
+Knob order in the editor: **Feed, Loss, Output, Compress, Filter, Tone** (then, on the
+`experimental/harmonize` branch, **Harmonize, Width, Harmonic**).
+
 | GUI / id            | Range          | Default | Meaning / mapping |
 |---------------------|----------------|---------|-------------------|
 | Feed `feed`         | 0 .. 1         | 0.5     | Linear gain on input injected into the running FT each hop. |
 | Loss `loss`         | 0 .. 1         | 0.2     | Decay of held magnitudes. `decay = exp(-loss·hop/sr·6)`. 0 = eternal hold. |
+| Output `output`     | 0 .. 2         | 1.0     | Final output level (linear gain), applied **before** the limiter so it still protects ±1. |
+| Compress `compress` | -1 .. +1       | 0.0     | Per-tone level reshaping vs the average active level. >0 expands (loud louder, quiet quieter → purify); <0 homogenises (quiet up, loud down). |
 | Filter `filterAmt`  | 0 .. 1         | 0.0     | Depth of the gaussian bell shaping. 0 = flat (no shaping). |
 | Tone `filterTone`   | 20 .. 20000 Hz | 1000    | Bell centre, log-skewed range (`NormalisableRange` skew 0.25). |
-| Attack `attack`     | 0 .. 1         | 0.0     | Onset smoothing of injected spectrum. 0 = instant; 1 = slow. |
-| Compress `compress` | -1 .. +1       | 0.0     | Per-tone level reshaping vs the average active level. >0 expands (loud louder, quiet quieter → purify); <0 homogenises (quiet up, loud down). |
 | Phase Noise `phaseNoise` | bool      | off     | When on, injects ±`kPhaseNoise` rad of per-frame random jitter into each bin's phase advance (shimmer/roughness). Non-accumulating — does not permanently detune. |
 | FT Size (GUI only)  | 1024 .. 8192   | 4096    | FFT size. `ComboBox`, powers of two. Not a DAW parameter. |
+| Live / 0 PDC (GUI only) | bool       | off     | Reports **0 latency** to the host (no plugin delay compensation) for live use. The real STFT latency is unchanged; the host just stops delay-compensating. |
+| Save sound (GUI only)   | bool       | off     | When on, the saved preset **includes the held spectral state** (per-engine S/omega/phase/Xs), so reloading restores the ongoing frozen sound. |
+| Harmonize `harmonize` | 0 .. 0.1   | 0.0     | *(experimental branch)* Master amount of coupled-oscillator pitch interaction. See [harmonize.md](harmonize.md). |
+| Width `harmWidth`     | 0.01 .. 3 oct | 0.5  | *(experimental)* σ of the nearness-influence curve. |
+| Harmonic `harmonic`   | 0 .. 1     | 0.0     | *(experimental)* Character blend under Harmonize: 0 = entrainment, 1 = harmonic attraction. |
+
+**Attack** was removed — lowering Feed gives the same slowed-onset effect.
 
 ## Notes
 - **Filter bell width** is a fixed constant `kSigmaOct = 1.25` octaves in
@@ -26,3 +36,7 @@ The engine consumes them via `SpectralEngine::Params`. FFT size is separate (GUI
 - **FT size** range is `kMinFftOrder=10 .. kMaxFftOrder=13` (orders, i.e. log2). Engines
   preallocate at the max order; changing size never allocates on the audio thread.
 - Changing FT size **resets** the held state and changes plugin latency. Expected.
+- **Live / Save sound** are GUI-only booleans persisted in the state tree (like FT size), not
+  APVTS params. `setStateInformation` restores them; with *Save sound* the held state is stored
+  as a base64 binary `audioState` property and reloaded via `SpectralEngine::read/writeAudioState`
+  under `audioStateLock` (which `processBlock` also takes, so restore can't race processing).
