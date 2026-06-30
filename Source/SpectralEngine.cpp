@@ -13,9 +13,10 @@ namespace
     constexpr float kEntRate   = 0.12f;  // per-frame fraction toward the entrainment target
     constexpr float kHarmRate  = 0.12f;  // per-frame fraction toward the harmonic target
     constexpr float kHarmStep  = 0.05f;  // clamp on per-frame omega shift (rad/hop)
-    constexpr float kPeakFloor = 0.06f;  // peak threshold as a fraction of the max magnitude
-                                         // (> Hann's ~-31 dB first sidelobe, so leakage isn't
-                                         // mistaken for a tone)
+    constexpr float kPeakFloor = 0.03f;  // peak threshold as a fraction of the max magnitude.
+                                         // ~-30 dB: just above Hann's ~-31 dB first sidelobe
+                                         // (so leakage isn't mistaken for a tone) but low
+                                         // enough to include fairly quiet tones in harmonizing.
     constexpr int   kMaxDen    = 6;      // largest harmonic ratio denominator/numerator
 }
 
@@ -350,11 +351,12 @@ void SpectralEngine::applyHarmonize (const Params& p)
     {
         const float a = std::abs (S[(size_t) k]);
         if (a <= floor) continue;
-        // prominence: local max over +/-2 bins (the floor already rejects Hann sidelobes;
-        // a narrow window keeps two near tones resolved as two peaks so they keep entraining
-        // until they are close enough to merge)
+        // prominence: local max over +/-1 bin only (the floor rejects Hann sidelobes). A wider
+        // window would suppress the quieter of two close tones, counting them as one peak so
+        // they never entrain against each other; +/-1 resolves tones down to ~2 bins apart
+        // while a single tone's mainlobe is still a single peak.
         bool isPeak = true;
-        for (int o = -2; o <= 2 && isPeak; ++o)
+        for (int o = -1; o <= 1 && isPeak; ++o)
             if (o != 0 && std::abs (S[(size_t) (k + o)]) > a) isPeak = false;
         if (isPeak)
         {
@@ -373,7 +375,7 @@ void SpectralEngine::applyHarmonize (const Params& p)
     // sum is steady (a fixed comb, no time-varying beat). We don't move energy (that fights the
     // multi-bin leakage); we only equalise frequency. Frequency-based so it catches same-pitch
     // peaks regardless of which bins hold them.
-    const float lockTolHz = (float) sampleRate / (float) fftSize * 1.5f;
+    const float lockTolHz = (float) sampleRate / (float) fftSize * 2.0f;
     for (int i = 0; i < P; ++i)
         for (int j = i + 1; j < P; ++j)
         {

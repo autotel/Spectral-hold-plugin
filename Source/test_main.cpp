@@ -340,6 +340,38 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // 12) peak detection: a close pair is resolved as TWO peaks, and a quiet tone is included
+    {
+        SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+        std::vector<float> b (block);
+        double p1 = 0, p2 = 0, p3 = 0, p4 = 0;
+        const double w1 = 2.0 * M_PI * 600.0 / sr,  w2 = 2.0 * M_PI * 635.0 / sr;   // close pair (~3 bins)
+        const double w3 = 2.0 * M_PI * 1000.0 / sr, w4 = 2.0 * M_PI * 1500.0 / sr;  // loud + quiet (-26 dB)
+        for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                b[i] = 0.4f * (float) std::sin (p1) + 0.4f * (float) std::sin (p2)
+                     + 0.8f * (float) std::sin (p3) + 0.04f * (float) std::sin (p4);
+                p1 += w1; p2 += w2; p3 += w3; p4 += w4;
+            }
+            e2.process (b.data(), b.data(), block, p);
+        }
+        SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.harmonize = 0.01f; h.harmWidth = 1.0f;
+        std::vector<float> pf, pw, pd; int n = 0;
+        for (int t = 0; t < 10 && n <= 0; ++t) { std::fill (b.begin(), b.end(), 0.0f); e2.process (b.data(), b.data(), block, h); n = e2.copyPeaks (pf, pw, pd); }
+        int pair = 0, quiet = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            if (pf[(size_t) i] > 580.0f && pf[(size_t) i] < 660.0f) ++pair;
+            if (pf[(size_t) i] > 1440.0f && pf[(size_t) i] < 1560.0f) ++quiet;
+        }
+        bool ok = pair == 2 && quiet >= 1;
+        printf ("[%s] peak detection: close pair=%d (expect 2), quiet tone=%d (expect >=1)\n",
+                ok ? "PASS" : "FAIL", pair, quiet);
+        fails += ok ? 0 : 1;
+    }
+
     printf ("\n%s (%d failure%s)\n", fails == 0 ? "ALL PASS" : "FAILURES",
             fails, fails == 1 ? "" : "s");
     return fails == 0 ? 0 : 1;

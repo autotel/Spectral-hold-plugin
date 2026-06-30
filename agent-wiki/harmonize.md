@@ -64,9 +64,16 @@ range). To move a tone further, the **energy itself** must walk across bins:
   and `prevPhase`. Rigid (whole-packet) is essential: migrating bins *independently* tears the
   coherent peak apart (it splits into two). After the shift the centre's `rel` drops by one
   bin, so it can keep drifting and migrate again — unlimited travel, one bin at a time.
-- This is why **peak detection matters**: `kPeakFloor` (0.06, above Hann's ~-31 dB sidelobe)
-  plus a ±4-bin prominence test keep leakage from being mistaken for tones (which would
-  scatter energy). Don't lower the floor without re-checking.
+- This is why **peak detection matters** (`SpectralEngine.cpp`, step 1):
+  - `kPeakFloor = 0.03` (~-30 dB, just above Hann's ~-31 dB first sidelobe): low enough to
+    include fairly **quiet tones** in harmonizing, high enough that leakage isn't a "tone".
+    Don't drop it below the sidelobe level or leakage becomes false peaks.
+  - prominence = local max over **±1 bin** only. A wider window suppresses the quieter of two
+    **close tones**, counting them as one peak — they then never entrain against each other and
+    beat. ±1 resolves tones down to ~2 bins apart while a single tone's mainlobe stays one peak.
+  - These two are coupled with the unison lock: `lockTolHz` (~2 bins) must be ≥ the separation
+    at which ±1 detection collapses the pair to one, so they get locked just before that.
+  Verified by the `peak detection:` test (close pair → 2 peaks; a -26 dB tone is detected).
 
 Verified by the `energy migration:` test: a weak tone is pulled to a strong anchor's 4/3
 harmonic and lands **below** its omega-only floor (1400 → ~1371 Hz, past ~1383), proving the
