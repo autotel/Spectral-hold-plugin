@@ -5,6 +5,8 @@ SpectrumDisplay::SpectrumDisplay (SpectralHoldProcessor& p) : proc (p)
 {
     pFiltAmt  = proc.apvts.getRawParameterValue ("filterAmt");
     pFiltTone = proc.apvts.getRawParameterValue ("filterTone");
+    pHarm      = proc.apvts.getRawParameterValue ("harmonize");
+    pHarmWidth = proc.apvts.getRawParameterValue ("harmWidth");
     setMouseCursor (juce::MouseCursor::NoCursor); // we draw our own brush cursor
     startTimerHz (30);
 }
@@ -97,6 +99,11 @@ void SpectrumDisplay::timerCallback()
         float& s = smoothMag[i];
         s += (m - s) * (m > s ? 0.6f : 0.15f);
     }
+    // harmonize influence peaks (keep last frame if busy)
+    int np = proc.getHarmonizePeaks (peakFreq, peakWeight, peakDrift);
+    if (np >= 0)
+        peakCount = np;
+
     repaint();
 }
 
@@ -169,6 +176,57 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         }
         g.setColour (juce::Colour::fromHSV (0.13f, 0.55f, 1.0f, 0.85f));
         g.strokePath (curve, juce::PathStrokeType (1.5f));
+    }
+
+    // --- harmonize influence overlay ---------------------------------------
+    const float harmAmt = pHarm != nullptr ? pHarm->load() : 0.0f;
+    if (harmAmt > 0.001f && peakCount > 0)
+    {
+        const float sigma = pHarmWidth != nullptr ? pHarmWidth->load() : 0.5f;
+        const float invS2 = 1.0f / (2.0f * juce::jmax (0.05f, sigma) * sigma);
+        const float band  = (float) H * 0.30f;       // influence humps live in the top band
+        float maxW = 1.0e-9f;
+        for (int i = 0; i < peakCount; ++i) maxW = juce::jmax (maxW, peakWeight[(size_t) i]);
+
+        const juce::Colour acc = juce::Colour::fromHSV (0.52f, 0.55f, 1.0f, 1.0f); // aurora blue
+
+        for (int i = 0; i < peakCount; ++i)
+        {
+            const float f0 = peakFreq[(size_t) i];
+            if (f0 < kMinHz || f0 > kMaxHz) continue;
+            const float oct0 = std::log2 (f0);
+            const float wn   = peakWeight[(size_t) i] / maxW; // 0..1 weight = pull strength
+
+            // gaussian influence hump (its width = the Width knob)
+            juce::Path hump;
+            hump.startNewSubPath (0.0f, band);
+            for (int x = 0; x < W; ++x)
+            {
+                float oct = std::log2 (juce::jlimit (kMinHz, kMaxHz, xToFreq ((float) x)));
+                float d   = oct - oct0;
+                float v   = wn * std::exp (-d * d * invS2);
+                hump.lineTo ((float) x, band - v * band);
+            }
+            hump.lineTo ((float) (W - 1), band);
+            g.setColour (acc.withAlpha (0.06f + 0.10f * wn));
+            g.fillPath (hump);
+
+            // peak marker + pull-direction arrow (right = pitch rising, left = falling)
+            const float px = freqToX (f0);
+            g.setColour (acc.withAlpha (0.25f + 0.4f * wn));
+            g.drawVerticalLine ((int) px, 0.0f, (float) H);
+
+            const float drift = peakDrift[(size_t) i];               // Hz/frame, signed
+            const float len   = juce::jlimit (0.0f, 26.0f, std::abs (drift) * 3.0f);
+            if (len > 1.5f)
+            {
+                const float dir = drift >= 0.0f ? 1.0f : -1.0f;
+                const float ay  = band * 0.45f;
+                const float x0  = px, x1 = px + dir * len;
+                g.setColour (acc.withAlpha (0.95f));
+                g.drawArrow ({ x0, ay, x1, ay }, 2.0f, 7.0f, 7.0f);
+            }
+        }
     }
 
     // --- brush cursor ------------------------------------------------------

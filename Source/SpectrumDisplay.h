@@ -47,6 +47,12 @@ private:
     std::atomic<float>* pFiltAmt  = nullptr;
     std::atomic<float>* pFiltTone = nullptr;
 
+    // harmonize influence overlay
+    std::atomic<float>* pHarm      = nullptr;
+    std::atomic<float>* pHarmWidth = nullptr;
+    std::vector<float> peakFreq, peakWeight, peakDrift;
+    int peakCount = 0;
+
     // brush cursor state (message thread / paint only)
     juce::Point<float> mousePos;
     bool  mouseInside = false;

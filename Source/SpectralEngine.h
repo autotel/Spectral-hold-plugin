@@ -46,6 +46,10 @@ public:
     // Returns numBins, or 0 if the engine is mid-reconfigure (non-blocking).
     int copyDisplay (std::vector<float>& mag, std::vector<float>& phase);
 
+    // Harmonize influence snapshot: per detected peak, its frequency (Hz), weight (|S|) and
+    // current pitch drift (Hz, signed). Returns the peak count (0 when harmonize is off).
+    int copyPeaks (std::vector<float>& freq, std::vector<float>& weight, std::vector<float>& drift);
+
     // Gaussian bell shaping gain in [1-amt .. 1] at a given frequency. Shared with
     // the GUI so the displayed filter curve matches the DSP exactly. fft-size independent.
     static constexpr float kSigmaOct = 1.25f; // bell half-width, octaves
@@ -94,6 +98,9 @@ private:
     static constexpr int kMaxPeaks = 128;
     std::vector<int>   peakBin;
     std::vector<float> peakFreq, peakAmp, peakDelta;
+    // peak snapshot for the GUI influence overlay (guarded by displayLock)
+    std::vector<float> dispPeakF, dispPeakA, dispPeakD;
+    int dispPeakN = 0;
 
     // scratch (length 2*maxFftSize for juce real-only transform)
     std::vector<float> fftData;

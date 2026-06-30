@@ -43,6 +43,13 @@ public:
     int getDisplaySnapshot (std::vector<float>& mag, std::vector<float>& phase,
                             double& sr, int& size);
 
+    // Harmonize influence snapshot (channel 0): peak freqs/weights/drifts. Returns count
+    // (0 = harmonize off), or -1 if busy (keep last frame).
+    int getHarmonizePeaks (std::vector<float>& freq, std::vector<float>& weight, std::vector<float>& drift)
+    {
+        return engines[0].copyPeaks (freq, weight, drift);
+    }
+
     // GUI brush edit: scale the held spectrum around centreFreqHz (all channels).
     // strength in [-1..+1]: +boost, 0 none, -cut. sigmaOct = brush size (GUI-only).
     void applySpectralBrush (float centreFreqHz, float strength, float sigmaOct)

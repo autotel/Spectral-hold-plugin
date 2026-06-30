@@ -22,17 +22,33 @@ the tones glide into alignment. No new synthesis path. `f = omega · sr / (hop �
      ratio n/m)`, weight `A_j · 1/(n·m)` so simple ratios (2/1, 3/2…) dominate. Ratio table
      built once for `n,m ≤ kMaxDen` (coprime).
    - `w(i,j) = exp(−Δoct² / 2σ²)`, `σ = harmWidth` (octaves) = the nearness-influence width.
-   - Combine: `df = harmonize·kEntRate·Δent + harmonic·kHarmRate·Δharm`, clamp the resulting
-     `omega` step to `±kHarmStep`.
+   - Combine as a **blend**, with `harmonize` as the master and `harmonic` as the character:
+     `df = harmonize · kHarmRate · ((1−harmonic)·Δent + harmonic·Δharm)`, then clamp the
+     `omega` step to `±kHarmStep`. **`harmonic` does nothing when `harmonize = 0`** (master gate).
 3. **Apply**: shift `omega` of each peak bin ±2 neighbours (leakage), clamped to
    `expectedAdv ± π` so the phase-vocoder stays valid.
 
 ## Parameters
 | GUI / id          | Range     | Default | Meaning |
 |-------------------|-----------|---------|---------|
-| Harmonize `harmonize` | 0..1   | 0       | Entrainment strength (averaging / metronome sync). |
+| Harmonize `harmonize` | 0..1   | 0       | **Master amount.** Strength of the pitch coupling. 0 = off (and disables Harmonic). |
 | Width `harmWidth` | 0.05..3 oct | 0.5  | σ of the nearness curve. Wide = global averaging; thin = only close tones interact. |
-| Harmonic `harmonic` | 0..1    | 0       | Attraction toward low-denominator harmonic ratios. |
+| Harmonic `harmonic` | 0..1    | 0       | **Character blend** under Harmonize: 0 = pure entrainment (averaging), 1 = pure harmonic attraction (low-denominator ratios). |
+
+## Permanent vs momentary (important UX point)
+Harmonize **permanently rewrites the held `omega`** — that's required for tones to *converge*
+over time (integration). Like Brush and Compress, it's a **state edit**, so:
+- with **Feed = 0** the shift sticks after you lower the knob (permanent);
+- with **Feed > 0** the input's frequency tracking keeps pulling `omega` back, so the edit
+  self-heals and it feels momentary.
+Filter and Phase Noise, by contrast, are output/live and always momentary. This Feed
+interaction is the source of the "sometimes permanent, sometimes momentary" feel.
+
+## Influence overlay
+When Harmonize > 0 the display overlays, per detected peak: a gaussian **influence hump**
+(width = the Width knob, height/alpha = the peak's weight), a vertical marker, and a
+**drift arrow** (right = pitch rising, left = falling; length ∝ current drift). Data comes
+from `SpectralEngine::copyPeaks` (snapshotted under `displayLock` in `applyHarmonize`).
 
 ## Cost
 Peak-based: P≈tens → O(P²)·(ratio table) ≈ ~1M ops/s. Negligible. The trap is per-bin O(B²);

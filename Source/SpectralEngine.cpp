@@ -32,6 +32,9 @@ void SpectralEngine::prepare (double sr, int maxFftOrder)
     peakFreq.assign  ((size_t) kMaxPeaks, 0.0f);
     peakAmp.assign   ((size_t) kMaxPeaks, 0.0f);
     peakDelta.assign ((size_t) kMaxPeaks, 0.0f);
+    dispPeakF.assign ((size_t) kMaxPeaks, 0.0f);
+    dispPeakA.assign ((size_t) kMaxPeaks, 0.0f);
+    dispPeakD.assign ((size_t) kMaxPeaks, 0.0f);
     inRing.assign  ((size_t) maxFftSize, 0.0f);
     outRing.assign ((size_t) maxFftSize, 0.0f);
     window.assign  ((size_t) maxFftSize, 0.0f);
@@ -310,8 +313,14 @@ void SpectralEngine::drainBrush()
 
 void SpectralEngine::applyHarmonize (const Params& p)
 {
-    if (p.harmonize <= 1.0e-4f && p.harmonic <= 1.0e-4f)
+    // Harmonize is the master amount; Harmonic only blends the *character* (0 = averaging /
+    // entrainment, 1 = harmonic attraction). So Harmonic does nothing while Harmonize is 0.
+    if (p.harmonize <= 1.0e-4f)
+    {
+        const juce::ScopedTryLock stl (displayLock);
+        if (stl.isLocked()) dispPeakN = 0; // clear the influence overlay
         return;
+    }
 
     // low-denominator harmonic ratios (built once): value, log2(value), weight 1/(n*m)
     struct Ratio { float l2, invDen; };
@@ -389,11 +398,25 @@ void SpectralEngine::applyHarmonize (const Params& p)
             }
         }
 
-        float df = 0.0f;
-        if (entDen  > 0.0) df += p.harmonize * kEntRate  * (float) (entNum  / entDen);
-        if (harmDen > 0.0) df += p.harmonic  * kHarmRate * (float) (harmNum / harmDen);
+        // blend the two characters: Harmonic = 0 pure entrainment, 1 pure harmonic.
+        const float entDrift  = (entDen  > 0.0) ? (float) (entNum  / entDen)  : 0.0f;
+        const float harmDrift = (harmDen > 0.0) ? (float) (harmNum / harmDen) : 0.0f;
+        const float blended   = (1.0f - p.harmonic) * entDrift + p.harmonic * harmDrift;
+        const float df        = p.harmonize * kHarmRate * blended;
 
         peakDelta[(size_t) i] = juce::jlimit (-kHarmStep, kHarmStep, df / fScale); // -> rad/hop
+    }
+
+    // snapshot peaks for the influence overlay (freq, weight, drift in Hz)
+    if (const juce::ScopedTryLock stl (displayLock); stl.isLocked())
+    {
+        dispPeakN = juce::jmin (P, kMaxPeaks);
+        for (int i = 0; i < dispPeakN; ++i)
+        {
+            dispPeakF[(size_t) i] = peakFreq[(size_t) i];
+            dispPeakA[(size_t) i] = peakAmp[(size_t) i];
+            dispPeakD[(size_t) i] = peakDelta[(size_t) i] * fScale; // rad/hop -> Hz drift
+        }
     }
 
     // 3. apply the shift to each peak's bin and its immediate leakage neighbours
@@ -422,4 +445,18 @@ int SpectralEngine::copyDisplay (std::vector<float>& mag, std::vector<float>& ph
     mag.assign   (dispMag.begin(),   dispMag.begin()   + numBins);
     phase.assign (dispPhase.begin(), dispPhase.begin() + numBins);
     return numBins;
+}
+
+int SpectralEngine::copyPeaks (std::vector<float>& freq, std::vector<float>& weight,
+                               std::vector<float>& drift)
+{
+    const juce::ScopedTryLock stl (displayLock);
+    if (! stl.isLocked())
+        return -1; // busy: keep last frame
+
+    const int n = dispPeakN;
+    freq.assign   (dispPeakF.begin(), dispPeakF.begin() + n);
+    weight.assign (dispPeakA.begin(), dispPeakA.begin() + n);
+    drift.assign  (dispPeakD.begin(), dispPeakD.begin() + n);
+    return n;
 }
