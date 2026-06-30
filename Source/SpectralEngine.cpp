@@ -505,12 +505,13 @@ void SpectralEngine::applyHarmonize (const Params& p)
         if (s == 0) continue;
         if (k - kPad < 1 || k + kPad >= numBins - 1) continue; // near edges: don't migrate
 
-        // collision avoidance: if another peak is within two packet widths, don't migrate.
-        // Overlapping packets would trample each other (smearing the energy). Such pairs are
-        // already frequency-locked above, so leaving the energy put gives a steady sum.
+        // collision avoidance: only skip when a neighbour is close enough that the packets
+        // heavily overlap (would trample each other). Use kPad (not 2*kPad) so lightly
+        // overlapping tones still re-centre instead of being stranded off their bin centre
+        // (which leaves the energy and the actual pitch/marker visibly misaligned).
         bool nearNeighbour = false;
         for (int j = 0; j < P && ! nearNeighbour; ++j)
-            if (j != i && std::abs (peakBin[(size_t) j] - k) <= 2 * kPad)
+            if (j != i && std::abs (peakBin[(size_t) j] - k) <= kPad)
                 nearNeighbour = true;
         if (nearNeighbour) continue;
 
