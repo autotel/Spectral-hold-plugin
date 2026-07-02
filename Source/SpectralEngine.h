@@ -7,10 +7,9 @@
 //
 // Model (see agent-wiki/dsp-design.md): a phase-vocoder where every bin keeps a
 // complex phasor S[k] that free-runs at the bin centre frequency. Input is
-// re-injected each hop; the held content decays. The "filter" is a per-bin
-// gaussian bell that makes out-of-bell bins decay faster (frequency-dependent
-// loss); freshly fed input is compensated so it always enters at unity gain
-// regardless of the filter.
+// re-injected each hop; the held content decays. The "shaper" (ShapeCurves.h)
+// applies a per-bin signed amplitude curve either as an output-only gain
+// (momentary) or as a multiply on the held state itself (permanent).
 class SpectralEngine
 {
 public:
@@ -18,11 +17,17 @@ public:
     {
         float feed       = 0.5f;    // 0..1  how much input is mixed into the running FT
         float loss       = 0.2f;    // 0..1  how fast held magnitudes decay
-        float filterAmt  = 0.0f;    // 0..1  depth of the gaussian shaping of the FT
-        float filterTone = 1000.0f; // Hz, centre of the bell (log-mapped)
-        float attack     = 0.0f;    // 0..1  0 = instant onset, 1 = slow onset
-        float compress   = 0.0f;    // -1..+1  <0 homogenise levels, >0 expand (purify)
         bool  phaseNoise = false;   // feed random jitter into the frequency tracking
+
+        // Spectral shaper: per-bin amplitude change from a math curve (replaces the
+        // old Filter + Compress). See ShapeCurves.h / agent-wiki/dsp-design.md.
+        float shapeAmt   = 1.0f;    // 0..1  global depth
+        float shapeMode  = 0.0f;    // 0..1  momentary (0, output-only) <-> permanent (1, fed into S)
+        float shape      = 0.0f;    // 0..3  cross-fades Level/Sigmoid/Spikes/Sine
+        float shapeFreq  = 1000.0f; // Hz, curve centre (log-mapped)
+        float shapeWidth = 0.5f;    // 0..1  width/steepness/spacing, meaning per shape
+        float shapeCount = 1.0f;    // 0..1  extent/repetition, meaning per shape
+        float shapeLevel = 0.0f;    // -1..+1  signed strength; 0 = no effect for every shape
     };
 
     void prepare (double sampleRate, int maxFftOrder);
@@ -46,11 +51,6 @@ public:
     // NOT real-time safe: call with processing stopped or under an external lock.
     void writeAudioState (juce::MemoryOutputStream&) const;
     void readAudioState  (juce::MemoryInputStream&);
-
-    // Gaussian bell shaping gain in [1-amt .. 1] at a given frequency. Shared with
-    // the GUI so the displayed filter curve matches the DSP exactly. fft-size independent.
-    static constexpr float kSigmaOct = 1.25f; // bell half-width, octaves
-    static float filterGain (float freqHz, float toneHz, float amt);
 
     // Queue a brush edit (message thread): permanently scales the held spectrum around
     // centreFreqHz with a gaussian falloff in log-frequency of half-width sigmaOct octaves.
@@ -83,7 +83,7 @@ private:
 
     // spectral state
     std::vector<std::complex<float>> S;   // held phasors
-    std::vector<std::complex<float>> Xs;  // attack-smoothed input spectrum
+    std::vector<std::complex<float>> Xs;  // per-hop input spectrum (fed into S)
     // Instantaneous-frequency phase tracking (smooth freeze, not bin-centre):
     std::vector<float> expectedAdv;       // 2*pi*k*hop/N, the bin-centre advance per hop
     std::vector<float> omega;             // measured per-hop phase advance per bin (rad)

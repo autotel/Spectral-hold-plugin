@@ -21,6 +21,10 @@ held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, 
 - [gui-display.md](gui-display.md) — the custom "lighting" spectrum view.
 - [build-and-test.md](build-and-test.md) — configure, build, run the offline test.
 - [gotchas.md](gotchas.md) — traps, decisions already made, things that look like bugs but aren't.
+- [plan-spectral-shaper.md](plan-spectral-shaper.md) — design rationale for the spectral
+  **shaper** (branch `exp/spectral-shaper`, implemented) that replaced Filter + Compress.
+  The current behavior is documented in dsp-design.md / parameters.md; read this plan for
+  the "why" behind the math constants.
 
 ## Fast facts
 - JUCE lives at `../JUCE` (sibling of repo root), used via `add_subdirectory`. Modern

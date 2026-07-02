@@ -9,9 +9,14 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (feed,       "feed",       "Feed");
     setupKnob (loss,       "loss",       "Loss");
     setupKnob (output,     "output",     "Output");
-    setupKnob (compress,   "compress",   "Compress");
-    setupKnob (filterAmt,  "filterAmt",  "Filter");
-    setupKnob (filterTone, "filterTone", "Tone");
+
+    setupKnob (shapeAmt,   "shapeAmt",   "Amount");
+    setupKnob (shapeMode,  "shapeMode",  "Mode");
+    setupKnob (shape,      "shape",      "Shape");
+    setupKnob (shapeFreq,  "shapeFreq",  "Freq");
+    setupKnob (shapeWidth, "shapeWidth", "Width");
+    setupKnob (shapeCount, "shapeCount", "Count");
+    setupKnob (shapeLevel, "shapeLevel", "Level");
 
     // FFT size: GUI-only (not a DAW parameter).
     addAndMakeVisible (sizeBox);
@@ -59,7 +64,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     saveSoundButton.onClick = [this] { proc.setSaveWithSound (saveSoundButton.getToggleState()); };
     addAndMakeVisible (saveSoundButton);
 
-    setSize (860, 420);
+    setSize (860, 480);
 }
 
 SpectralHoldEditor::~SpectralHoldEditor()
@@ -98,19 +103,28 @@ void SpectralHoldEditor::resized()
     // reserve the bottom row first so knobs never overlap it
     auto bottom = r.removeFromBottom (30).reduced (8, 5);
 
-    // knobs in the band between display and bottom row, kept small
-    auto controls = r.reduced (8, 4);
-    const int n = 6;
-    const int kw = controls.getWidth() / n;
-    Knob* knobs[n] = { &feed, &loss, &output, &compress, &filterAmt, &filterTone };
-    for (auto* k : knobs)
+    // knobs in the band between display and bottom row, kept small.
+    // Row 1: Feed/Loss/Output. Row 2: the spectral shaper (Amount/Mode/Shape/Freq/Width/Count/Level).
+    auto layoutRow = [] (juce::Rectangle<int> area, Knob* const* knobs, int count)
     {
-        auto cell = controls.removeFromLeft (kw);
-        k->label.setBounds (cell.removeFromTop (16));
-        // square-ish, centred knob so it stays compact
-        int s = juce::jmin (cell.getWidth() - 8, cell.getHeight() - 4);
-        k->slider.setBounds (cell.withSizeKeepingCentre (s, s));
-    }
+        const int kw = area.getWidth() / count;
+        for (int i = 0; i < count; ++i)
+        {
+            auto cell = area.removeFromLeft (kw);
+            knobs[i]->label.setBounds (cell.removeFromTop (16));
+            int s = juce::jmin (cell.getWidth() - 8, cell.getHeight() - 4);
+            knobs[i]->slider.setBounds (cell.withSizeKeepingCentre (s, s));
+        }
+    };
+
+    auto controls = r.reduced (8, 4);
+    auto row1 = controls.removeFromTop (controls.getHeight() / 2);
+    auto row2 = controls;
+
+    Knob* row1Knobs[] = { &feed, &loss, &output };
+    Knob* row2Knobs[] = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
+    layoutRow (row1, row1Knobs, 3);
+    layoutRow (row2, row2Knobs, 7);
 
     sizeBox.setBounds (bottom.removeFromRight (80));
     sizeLabel.setBounds (bottom.removeFromRight (50));

@@ -3,32 +3,44 @@
 DAW-facing parameters are defined in `SpectralHoldProcessor::createLayout()`.
 The engine consumes them via `SpectralEngine::Params`. FFT size is separate (GUI-only).
 
-| GUI / id            | Range          | Default | Meaning / mapping |
-|---------------------|----------------|---------|-------------------|
-Knob order in the editor: **Feed, Loss, Output, Compress, Filter, Tone**.
+Knob order in the editor: **row 1** Feed, Loss, Output; **row 2** Amount, Mode, Shape,
+Freq, Width, Count, Level (the spectral **shaper** — see below).
 
 | GUI / id            | Range          | Default | Meaning / mapping |
 |---------------------|----------------|---------|-------------------|
 | Feed `feed`         | 0 .. 1         | 0.5     | Linear gain on input injected into the running FT each hop. |
 | Loss `loss`         | 0 .. 1         | 0.2     | Decay of held magnitudes. `decay = exp(-loss·hop/sr·6)`. 0 = eternal hold. |
 | Output `output`     | 0 .. 2         | 1.0     | Final output level (linear gain), applied **before** the limiter so it still protects ±1. |
-| Compress `compress` | -1 .. +1       | 0.0     | Per-tone level reshaping vs the average active level. >0 expands (loud louder, quiet quieter → purify); <0 homogenises (quiet up, loud down). |
-| Filter `filterAmt`  | 0 .. 1         | 0.0     | Depth of the gaussian bell shaping. 0 = flat (no shaping). |
-| Tone `filterTone`   | 20 .. 20000 Hz | 1000    | Bell centre, log-skewed range (`NormalisableRange` skew 0.25). |
+| Amount `shapeAmt`   | 0 .. 1         | 1.0     | Global depth of the shaper; scales `L[k]` before it's applied. |
+| Mode `shapeMode`    | 0 .. 1         | 0.0     | Momentary (0, output-only, non-destructive) ↔ permanent (1, fed into the held state, compounding). Continuous cross-fade. |
+| Shape `shape`       | 0 .. 3         | 0.0     | Cross-fades **Level(0) → Sigmoid(1) → Spikes(2) → Sine(3)**. |
+| Freq `shapeFreq`    | 20 .. 20000 Hz | 1000    | Curve centre, log-skewed range (`NormalisableRange` skew 0.25). Meaning depends on shape (§ below). |
+| Width `shapeWidth`  | 0 .. 1         | 0.5     | Width/steepness/spacing; meaning per shape. |
+| Count `shapeCount`  | 0 .. 1         | 1.0     | Extent/repetition; meaning per shape. |
+| Level `shapeLevel`  | -1 .. +1       | 0.0     | Signed strength. **0 = no effect for every shape** (global bypass). |
 | Phase Noise `phaseNoise` | bool      | off     | When on, injects ±`kPhaseNoise` rad of per-frame random jitter into each bin's phase advance (shimmer/roughness). Non-accumulating — does not permanently detune. |
 | FT Size (GUI only)  | 1024 .. 8192   | 4096    | FFT size. `ComboBox`, powers of two. Not a DAW parameter. |
 | Live / 0 PDC (GUI only) | bool       | off     | Reports **0 latency** to the host (no plugin delay compensation) for live use. The real STFT latency is unchanged; the host just stops delay-compensating. |
 | Save sound (GUI only)   | bool       | off     | When on, the saved preset **includes the held spectral state** (per-engine S/omega/phase/Xs), so reloading restores the ongoing frozen sound. |
 
 **Attack** was removed — lowering Feed gives the same slowed-onset effect.
+**Filter and Compress were removed** — replaced by the shaper (`shape=3, level<0` reproduces
+the old Filter; `shape=0, width=0.5, count=1, mode=1` reproduces the old Compress exactly).
+
+## The spectral shaper
+
+One unified per-bin amplitude curve (`Source/ShapeCurves.h`), replacing the old Filter +
+Compress. Full math in [dsp-design.md](dsp-design.md#the-spectral-shaper). Per shape,
+Freq/Width/Count take on a different meaning:
+
+| Shape | Freq | Width | Count | Level |
+|-------|------|-------|-------|-------|
+| **Level** (0) | window centre (inert at count=1) | extremes-vs-mean warp (0.5 = old Compress) | spectral extent of the effect (1 = everywhere) | strength, as old Compress |
+| **Sigmoid** (1) | slope position | ramp width | unused (v1) | >0 = highpass, <0 = lowpass, 0 = flat |
+| **Spikes** (2) | pattern centre | spike spacing | 1 spike → covers whole spectrum | subtractive band-select: >0 = **reject** peaks (notch), <0 = pass **only** peaks (cut the rest), flat at 0 |
+| **Sine** (3) | pattern centre (phase) | cycles/octave | 1 lobe → repeats across spectrum | -1..+1, sign flips cut/boost |
 
 ## Notes
-- **Filter bell width** is a fixed constant `kSigmaOct = 1.25` octaves in
-  `SpectralEngine.cpp` (the spec lists only amount + tone). Promote to a parameter here if
-  ever requested.
-- **Filter is non-destructive**: it shapes the *output* (`out = S·gFilt`), never the held
-  state's decay. Turning it off restores the held waves. Compensation keeps the fed-in level
-  constant regardless of `filterAmt` / `filterTone` — see [dsp-design.md](dsp-design.md).
 - **Spectral brush** (not a DAW parameter): drag on the display to permanently boost/cut the
   held spectrum around a tone. See [gui-display.md](gui-display.md) / [dsp-design.md](dsp-design.md).
 - **FT size** range is `kMinFftOrder=10 .. kMaxFftOrder=13` (orders, i.e. log2). Engines

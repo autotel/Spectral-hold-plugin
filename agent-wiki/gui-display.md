@@ -12,13 +12,22 @@
 - **Phase → hue**, very slightly: `pt = (phase+π)/2π`, `hue = 0.72 - 0.24·pt`
   (purple-blue → green-blue), saturation only **0.25** so lines stay near-white.
 
-## Filter curve overlay
-- Drawn **only when Filter amount > 0**. It plots `SpectralEngine::filterGain(freq, tone, amt)`
-  across the same log-x axis (`1` at top = no attenuation, `0` at bottom = full bell cut), as a
-  soft amber stroke. **No centre line** — the curve alone (by request).
-- It calls the **same** `SpectralEngine::filterGain` static the DSP uses, so the displayed
-  curve always matches the actual shaping (shared `kSigmaOct`). Don't reimplement the bell here.
-- Params are read live from the APVTS (`filterAmt`, `filterTone`) in `paint`.
+## Shaper curve overlay
+- Alpha **fades in/out over `shapeAmt ∈ [0 .. kFadeRange=0.15]`** rather than popping
+  on/off at a threshold (`fadeAlpha` in `SpectrumDisplay::paint`) — Level itself still
+  hard-gates visibility (`|shapeLevel| > 0.001`) since `level=0` is a flat no-op curve
+  for every shape. It plots the **momentary** gain curve
+  `gOut(freq)` across the same log-x axis, as a soft amber stroke, mapped linearly:
+  `gOut=0` (full cut) → bottom, `gOut=1` (no change) → mid-height, `gOut≥2` (+6 dB) → top
+  (clamped; the real momentary ceiling is +12 dB, the curve just clips visually there).
+- It calls `ShapeCurves::shapeL` directly (`#include "ShapeCurves.h"`) — the **same**
+  header-only math the DSP uses — so the displayed curve always matches the actual shaping.
+  Don't reimplement any shape's math here.
+- The **Level** shape needs a pivot mean of the active bins; the overlay approximates it
+  from the already-smoothed display magnitudes (`smoothMag`), not the engine's exact `S`
+  pivot — good enough for a preview, not meant to be sample-exact.
+- Params are read live from the APVTS (`shapeAmt`, `shapeMode`, `shape`, `shapeFreq`,
+  `shapeWidth`, `shapeCount`, `shapeLevel`) in `paint`.
 
 ## Brush editing (interactive)
 - The view is editable: drag (mouse or pen) to reshape the held spectrum via

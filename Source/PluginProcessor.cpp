@@ -16,10 +16,15 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pFeed   = apvts.getRawParameterValue ("feed");
     pLoss   = apvts.getRawParameterValue ("loss");
     pOutput = apvts.getRawParameterValue ("output");
-    pFiltA  = apvts.getRawParameterValue ("filterAmt");
-    pFiltT  = apvts.getRawParameterValue ("filterTone");
-    pCompress = apvts.getRawParameterValue ("compress");
     pPhaseNoise = apvts.getRawParameterValue ("phaseNoise");
+
+    pShapeAmt   = apvts.getRawParameterValue ("shapeAmt");
+    pShapeMode  = apvts.getRawParameterValue ("shapeMode");
+    pShape      = apvts.getRawParameterValue ("shape");
+    pShapeFreq  = apvts.getRawParameterValue ("shapeFreq");
+    pShapeWidth = apvts.getRawParameterValue ("shapeWidth");
+    pShapeCount = apvts.getRawParameterValue ("shapeCount");
+    pShapeLevel = apvts.getRawParameterValue ("shapeLevel");
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::createLayout()
@@ -39,20 +44,37 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "output", 1 }, "Output",
         NormalisableRange<float> (0.0f, 2.0f), 1.0f)); // output level (linear gain)
 
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "compress", 1 }, "Compress",
-        NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
-
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "filterAmt", 1 }, "Filter Amount",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
-
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "filterTone", 1 }, "Filter Tone",
-        NormalisableRange<float> (20.0f, 20000.0f, 0.0f, 0.25f), 1000.0f)); // skew = log-ish
-
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "phaseNoise", 1 }, "Phase Noise", false));
+
+    // Spectral shaper (replaces the old Filter + Compress; see agent-wiki/dsp-design.md)
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "shapeAmt", 1 }, "Shape Amount",
+        NormalisableRange<float> (0.0f, 1.0f), 1.0f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "shapeMode", 1 }, "Shape Mode",
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // 0 = momentary, 1 = permanent
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "shape", 1 }, "Shape",
+        NormalisableRange<float> (0.0f, 3.0f), 0.0f)); // Level/Sigmoid/Spikes/Sine
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "shapeFreq", 1 }, "Shape Freq",
+        NormalisableRange<float> (20.0f, 20000.0f, 0.0f, 0.25f), 1000.0f)); // skew = log-ish
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "shapeWidth", 1 }, "Shape Width",
+        NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "shapeCount", 1 }, "Shape Count",
+        NormalisableRange<float> (0.0f, 1.0f), 1.0f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "shapeLevel", 1 }, "Shape Level",
+        NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
 
     return layout;
 }
@@ -126,10 +148,15 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     SpectralEngine::Params p;
     p.feed       = pFeed->load();
     p.loss       = pLoss->load();
-    p.filterAmt  = pFiltA->load();
-    p.filterTone = pFiltT->load();
-    p.compress   = pCompress->load();
     p.phaseNoise = pPhaseNoise->load() > 0.5f;
+
+    p.shapeAmt   = pShapeAmt->load();
+    p.shapeMode  = pShapeMode->load();
+    p.shape      = pShape->load();
+    p.shapeFreq  = pShapeFreq->load();
+    p.shapeWidth = pShapeWidth->load();
+    p.shapeCount = pShapeCount->load();
+    p.shapeLevel = pShapeLevel->load();
 
     {
         const juce::ScopedLock sl (audioStateLock); // block preset restore mid-process

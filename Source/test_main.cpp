@@ -34,7 +34,7 @@ int main()
     eng.setOrder (12); // 4096
 
     SpectralEngine::Params p;
-    p.feed = 1.0f; p.loss = 0.2f; p.filterAmt = 0.0f; p.filterTone = 1000.0f; p.attack = 0.0f;
+    p.feed = 1.0f; p.loss = 0.2f; // shaper defaults to inactive (shapeLevel = 0)
 
     std::vector<float> in (block), out (block);
 
@@ -148,7 +148,8 @@ int main()
         fails += ok ? 0 : 1;
     }
 
-    // 6) compress: +expand widens the loud/quiet ratio, -homogenise narrows it
+    // 6) shaper Level shape (width=0.5, count=1, mode=1 permanent): +expand widens the
+    // loud/quiet ratio, -homogenise narrows it -- same math as the old Compress knob.
     {
         const int B500 = (int) std::lround (500.0  * 4096.0 / sr);  // ~bin 43
         const int B2k  = (int) std::lround (2000.0 * 4096.0 / sr);  // ~bin 171
@@ -164,9 +165,11 @@ int main()
                 eng.process (buf2.data(), buf2.data(), block, p);
             }
         };
-        auto ratioAfter = [&] (float compress, int blocks)
+        auto ratioAfter = [&] (float shapeLevel, int blocks)
         {
-            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.compress = compress;
+            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f;
+            h.shapeAmt = 1.0f; h.shapeMode = 1.0f; h.shape = 0.0f;
+            h.shapeWidth = 0.5f; h.shapeCount = 1.0f; h.shapeLevel = shapeLevel;
             for (int blk = 0; blk < blocks; ++blk) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); }
             int n = 0; for (int t = 0; t < 8 && n == 0; ++t) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); n = eng.copyDisplay (m, ph); }
             return m[(size_t) B500] / juce::jmax (1.0e-9f, m[(size_t) B2k]);
@@ -177,8 +180,78 @@ int main()
         deposit(); float homogen  = ratioAfter (-0.9f, 120);
         bool ok = std::isfinite (expanded) && std::isfinite (homogen)
                   && expanded > base * 1.3f && homogen < base * 0.8f;
-        printf ("[%s] compress: base=%.2f expand=%.2f homogenise=%.2f\n",
+        printf ("[%s] shaper level: base=%.2f expand=%.2f homogenise=%.2f\n",
                 ok ? "PASS" : "FAIL", base, expanded, homogen);
+        fails += ok ? 0 : 1;
+    }
+
+    // 6b) shaper Sine shape as a filter (replaces the old Filter knob): a tone parked
+    // at shapeFreq is strongly cut momentarily, and restored once amount goes to 0.
+    {
+        eng.setOrder (12); eng.reset();
+        double ph = 0.0, w = 2.0 * M_PI * 1000.0 / sr;
+        std::vector<float> buf2 (block);
+        for (int b = 0; b < (int) (0.4 * sr / block); ++b)
+        {
+            for (int i = 0; i < block; ++i) { buf2[i] = 0.5f * (float) std::sin (ph); ph += w; }
+            eng.process (buf2.data(), buf2.data(), block, p);
+        }
+        auto holdRms = [&] (const SpectralEngine::Params& hp)
+        {
+            for (int b = 0; b < 24; ++b) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, hp); }
+            return rms (buf2.data(), block);
+        };
+        SpectralEngine::Params cut; cut.feed = 0.0f; cut.loss = 0.0f;
+        cut.shapeAmt = 1.0f; cut.shapeMode = 0.0f; cut.shape = 3.0f;
+        cut.shapeFreq = 1000.0f; cut.shapeWidth = 0.35f; cut.shapeCount = 0.0f; cut.shapeLevel = -1.0f;
+        float cutRms = holdRms (cut);
+
+        SpectralEngine::Params restored = cut; restored.shapeAmt = 0.0f;
+        float restoredRms = holdRms (restored);
+
+        SpectralEngine::Params flat; flat.feed = 0.0f; flat.loss = 0.0f;
+        float flatRms = holdRms (flat);
+
+        bool ok = std::isfinite (cutRms) && cutRms < flatRms * 0.3f
+                  && restoredRms > cutRms * 1.5f;
+        printf ("[%s] shaper sine-as-filter: cut=%.4f restored=%.4f flat=%.4f\n",
+                ok ? "PASS" : "FAIL", cutRms, restoredRms, flatRms);
+        fails += ok ? 0 : 1;
+    }
+
+    // 6c) shaper Spikes shape is subtractive band-select: a single spike (count=0) at
+    // shapeFreq. level>0 rejects the peak tone (keeps the off-peak tone); level<0 passes
+    // only the peak tone (cuts the off-peak tone). Momentary (mode=0), read per-bin.
+    {
+        const int B1k = (int) std::lround (1000.0 * 4096.0 / sr);
+        const int B4k = (int) std::lround (4000.0 * 4096.0 / sr);
+        std::vector<float> m, ph, buf2 (block);
+        eng.setOrder (12); eng.reset();
+        double a = 0.0, b = 0.0, wa = 2.0 * M_PI * 1000.0 / sr, wb = 2.0 * M_PI * 4000.0 / sr;
+        for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+        {
+            for (int i = 0; i < block; ++i) { buf2[i] = 0.4f * (float) std::sin (a) + 0.4f * (float) std::sin (b); a += wa; b += wb; }
+            eng.process (buf2.data(), buf2.data(), block, p);
+        }
+        auto measure = [&] (float level, float& at1k, float& at4k)
+        {
+            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f;
+            h.shapeAmt = 1.0f; h.shapeMode = 0.0f; h.shape = 2.0f;
+            h.shapeFreq = 1000.0f; h.shapeWidth = 0.5f; h.shapeCount = 0.0f; h.shapeLevel = level;
+            // run several frames so the display snapshot reflects the shaped output (mode=0
+            // is non-destructive, so S is unchanged and each measure sees the same held tones)
+            for (int blk = 0; blk < 24; ++blk) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); }
+            int n = 0; for (int t = 0; t < 8 && n == 0; ++t) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); n = eng.copyDisplay (m, ph); }
+            at1k = m[(size_t) B1k]; at4k = m[(size_t) B4k];
+        };
+        float f1, f4, r1, r4, p1, p4;
+        measure (0.0f,  f1, f4);  // flat reference
+        measure (+1.0f, r1, r4);  // reject peaks -> 1k cut, 4k kept
+        measure (-1.0f, p1, p4);  // pass only peaks -> 4k cut, 1k kept
+        bool ok = r1 < f1 * 0.3f && r4 > f4 * 0.7f   // rejected the peak tone, kept the other
+                  && p4 < f4 * 0.3f && p1 > f1 * 0.7f; // passed only the peak tone
+        printf ("[%s] shaper spikes subtractive: reject(1k=%.4f,4k=%.4f) pass(1k=%.4f,4k=%.4f)\n",
+                ok ? "PASS" : "FAIL", r1, r4, p1, p4);
         fails += ok ? 0 : 1;
     }
 

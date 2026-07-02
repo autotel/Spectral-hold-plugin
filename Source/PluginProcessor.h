@@ -69,10 +69,16 @@ private:
     std::atomic<float>* pFeed   = nullptr;
     std::atomic<float>* pLoss   = nullptr;
     std::atomic<float>* pOutput = nullptr;
-    std::atomic<float>* pFiltA  = nullptr;
-    std::atomic<float>* pFiltT  = nullptr;
-    std::atomic<float>* pCompress = nullptr;
     std::atomic<float>* pPhaseNoise = nullptr;
+
+    // spectral shaper (replaces the old filter + compress)
+    std::atomic<float>* pShapeAmt   = nullptr;
+    std::atomic<float>* pShapeMode  = nullptr;
+    std::atomic<float>* pShape      = nullptr;
+    std::atomic<float>* pShapeFreq  = nullptr;
+    std::atomic<float>* pShapeWidth = nullptr;
+    std::atomic<float>* pShapeCount = nullptr;
+    std::atomic<float>* pShapeLevel = nullptr;
 
     // GUI-only switches (persisted manually, see get/setStateInformation)
     bool liveMode = false;

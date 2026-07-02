@@ -68,47 +68,53 @@ Let `hop = hopSize`, `sr = sampleRate`.
   keeps capture working at `loss=0` (where `1-lossDecay → 0`); at that extreme the hold still
   integrates slowly toward clipping and the limiter takes over. This is gain staging only — it
   does **not** touch the filter compensation invariant below.
-- **Attack → input smoothing.** `aCoef = exp(-attack · 9)`, applied as a one-pole on the
-  fed spectrum: `Xs[k] += (X[k] - Xs[k]) · aCoef`. `attack=0 → aCoef=1` (instant); large
-  attack → slow onset. Smoothing is on the **complex** input, so magnitude *and* phase ease in.
-- **Filter (gaussian bell in log-frequency).**
-  - `bell[k] = exp(-(oct - centreOct)² / (2·σ²))`, with `oct = log2(k·refFreq)`,
-    `refFreq = sr/fftSize` (the frequency of bin 1), `centreOct = log2(filterTone)`,
-    `σ = kSigmaOct = 1.25` octaves (constant; not exposed — change here if needed).
-    Bin 0 (DC) is treated as fully out of band.
-  - `gFilt[k] = 1 - filterAmt·(1 - bell[k])`  →  ranges `[1-filterAmt .. 1]`.
-  - **The filter is NON-DESTRUCTIVE output shaping** (changed from an earlier destructive
-    design). It does **not** enter `decay[k]` — the held state decays by `lossDecay` only.
-    Output is `S[k] · gFilt[k]`. So turning the filter down restores the held waves intact,
-    and sweeping Filter Tone sweeps the audible drone without permanently erasing partials.
+- **Attack was removed.** `Xs[k] = X[k]` unsmoothed each frame; lowering Feed gives the
+  same slowed-onset effect the old attack knob did.
 
-## Filter compensation (the in/out invariant)
-Spec: fed tones must come out "as if there was no filter". Since output is multiplied by
-`gFilt`, fresh input would otherwise be attenuated at the output. So injection is
-pre-divided by the filter gain:
+## The spectral shaper
+Replaces the old Filter + Compress with one per-bin signed curve. Math lives in
+`Source/ShapeCurves.h` (header-only, no JUCE dependency) so the engine, the GUI overlay
+(`SpectrumDisplay.cpp`), and tests share it verbatim — **never reimplement this math
+elsewhere** (the old filter bell drifted between DSP and GUI once; don't repeat that).
 
-- `comp[k] = 1 / max(kCompFloor, gFilt[k])`  (`kCompFloor = 0.05` prevents blow-up where
-  the bell → 0).
+Each bin gets a signed change `L[k] ∈ [-1..+1]` from `ShapeCurves::shapeL(shape, x, x0,
+width, count, level, ratio)`, where `x = log2(binFreq)`, `x0 = log2(shapeFreq)`. `shape`
+(0..3) linearly cross-fades between two adjacent named shapes:
 
-Fresh input's output contribution is `feed·Xs·comp · lossDecay · gFilt = feed·Xs·lossDecay`,
-independent of the filter — the requested constant in/out relationship. The held tail is
-shaped at the output by the *current* `gFilt`, so moving the filter is audible, while `S`
-itself is never lowered by the filter.
+- **Level** (0, replaces Compress): `L = level·sign(u)·|u|^γ · win(x)`, where
+  `u = ln(ratio)/4.6`, `ratio = |S[k]|/mean(active bins)` (same active-bin pivot as the
+  old Compress — bins ≤ `maxMag·1e-3` get `ratio=1` → `L=0`, leaving the noise floor
+  alone), `γ = 2^((width-0.5)·2)` (width=0.5 → γ=1, the compress-equivalent 1:1 case),
+  and `win(x)` a gaussian window in log-freq centred at `shapeFreq` that flattens to 1
+  everywhere as `count → 1` (so Freq is inert at the default `count=1`).
+- **Sigmoid** (1): `L = level·(tanh((x-x0)/wOct) ∓ 1)/2` — cut-only, continuous through
+  `level=0` (flat). `level>0` cuts below `x0` (highpass), `level<0` cuts above (lowpass).
+  `count` unused in v1.
+- **Spikes** (2): a gaussian spike comb `env ∈ [0..1]` at `x0 + n·d`, `n=0,±1,±2,…`,
+  amplitude fading in per spike-pair as `count` grows (smooth 1-spike → many-spikes). It's
+  **purely subtractive** and sign-split like the Sigmoid: `level>0 → L = -level·env`
+  (reject/notch the peaks), `level<0 → L = level·(1-env)` (pass **only** the peaks, cut
+  everything between), flat no-op at `level=0`. Always attenuates (`L ≤ 0`).
+- **Sine** (3, replaces Filter): `L = level·cos(2π·ρ·(x-x0))·env(x)`, `ρ` cycles/octave
+  from `width`, `env` a gaussian window like Level's that flattens as `count → 1`. At
+  `level=-1, count≈0` this is a single bell cut = the old filter.
 
-## Compress (per-tone level reshaping)
-Applied to the held state `S` once per frame, before the main update (`processFrame`). It
-reshapes each tone's level relative to a **pivot = the mean magnitude of the *active* bins**
-(bins above `maxMag·1e-3`; the empty noise floor is excluded so the pivot doesn't collapse to
-~0, and those bins are left untouched). Per active bin:
-```
-ratio = clamp(|S[k]| / mean, 0.01, 100)
-S[k] *= ratio ^ (compress · kCompressRate)     // kCompressRate = 0.05
-```
-- `compress > 0` → exponent > 0 → bins above the mean get louder, below get quieter:
-  **expansion / purify** (the dominant tones win).
-- `compress < 0` → bins above the mean drop, below rise: **homogenise** (levels even out).
-It's gentle per frame so it acts over time (like loss). The limiter and loss bound any runaway
-of the loud bins. Verified by the offline `compress:` test (two tones; ratio widens vs narrows).
+**Applying L[k]** (`processFrame`, per bin, `t = shapeAmt·L[k]`, `m = shapeMode`):
+- **Permanent** (compounds, replaces Compress): `S[k] *= exp(t · m · kPermScale)`
+  (`kPermScale = 0.23`). At `shape=0, width=0.5, count=1, mode=1, amount=1` this is
+  *exactly* `ratio ^ (level·0.05)` — bit-identical to the old Compress formula (the two
+  constants 4.6 and 0.23 are coupled; don't change one without the other).
+- **Momentary** (non-destructive, replaces Filter): `tm = t·(1-m)`;
+  `gOut = exp(tm·ln4)` for `tm≥0` (up to +12 dB boost), or `(1+tm)²` for `tm<0` (smooth
+  cut to 0 at `tm=-1`). Output is `S[k]·gOut`, `S` itself untouched — turning Amount down
+  restores the held sound intact.
+- **Input compensation**: `comp[k] = 1/max(kCompFloor, min(1, gOut))`. Only momentary
+  *cuts* are compensated (fed tones pass through unaffected, as the old filter did); boosts
+  are **not** compensated, so live input isn't attenuated by them.
+
+`kCompFloor = 0.05` (unchanged from the old filter). Bin 0 (DC) and frames where
+`shapeAmt·|shapeLevel| ≈ 0` skip the whole shaper (`L=0`, `gOut=1`, `comp=1`) — cheap
+early-out gate, mirrors the old `compress`/`filterAmt` gating.
 
 ## Spectral brush (GUI editing of the held state)
 Dragging on the display (`SpectrumDisplay`) permanently reshapes the held spectrum `S` —
@@ -142,5 +148,6 @@ allocates — it just recomputes window/rot tables and the FFT object. State is 
 change (a clean re-freeze), and latency is re-reported.
 
 ## Constants worth knowing (top of SpectralEngine.cpp)
-`kOverlap=4`, `kCompFloor=0.05`, `kDecayFloor=1e-4`, `kSigmaOct=1.25`. Limiter constants
-are at the top of `PluginProcessor.cpp`.
+`kOverlap=4`, `kCompFloor=0.05`, `kDecayFloor=1e-4`, `kPermScale=0.23` (coupled with the
+`4.6` normaliser in `ShapeCurves.h` — see the shaper section above), `kLn4=ln(4)` (momentary
+boost ceiling, +12 dB). Limiter constants are at the top of `PluginProcessor.cpp`.

@@ -1,10 +1,16 @@
 #include "SpectrumDisplay.h"
 #include "PluginProcessor.h"
+#include "ShapeCurves.h"
 
 SpectrumDisplay::SpectrumDisplay (SpectralHoldProcessor& p) : proc (p)
 {
-    pFiltAmt  = proc.apvts.getRawParameterValue ("filterAmt");
-    pFiltTone = proc.apvts.getRawParameterValue ("filterTone");
+    pShapeAmt   = proc.apvts.getRawParameterValue ("shapeAmt");
+    pShapeMode  = proc.apvts.getRawParameterValue ("shapeMode");
+    pShape      = proc.apvts.getRawParameterValue ("shape");
+    pShapeFreq  = proc.apvts.getRawParameterValue ("shapeFreq");
+    pShapeWidth = proc.apvts.getRawParameterValue ("shapeWidth");
+    pShapeCount = proc.apvts.getRawParameterValue ("shapeCount");
+    pShapeLevel = proc.apvts.getRawParameterValue ("shapeLevel");
     setMouseCursor (juce::MouseCursor::NoCursor); // we draw our own brush cursor
     startTimerHz (30);
 }
@@ -152,22 +158,66 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         g.fillRect ((float) x, 0.0f, 1.0f, (float) H);
     }
 
-    // --- filter curve overlay (only when filter amount > 0) ----------------
-    const float fAmt  = pFiltAmt  != nullptr ? pFiltAmt->load()  : 0.0f;
-    const float fTone = pFiltTone != nullptr ? pFiltTone->load() : 1000.0f;
-    if (fAmt > 0.001f)
+    // --- shaper curve overlay (fades out as amount -> 0, no hard toggle) ----
+    const float shAmt   = pShapeAmt   != nullptr ? pShapeAmt->load()   : 0.0f;
+    const float shMode  = pShapeMode  != nullptr ? pShapeMode->load()  : 0.0f;
+    const float shShape = pShape      != nullptr ? pShape->load()     : 0.0f;
+    const float shFreq  = pShapeFreq  != nullptr ? pShapeFreq->load()  : 1000.0f;
+    const float shWidth = pShapeWidth != nullptr ? pShapeWidth->load() : 0.5f;
+    const float shCount = pShapeCount != nullptr ? pShapeCount->load() : 1.0f;
+    const float shLevel = pShapeLevel != nullptr ? pShapeLevel->load() : 0.0f;
+    // ramp alpha over [0 .. kFadeRange] instead of popping in/out at a fixed threshold
+    constexpr float kFadeRange = 0.15f;
+    const float fadeAlpha = juce::jlimit (0.0f, 1.0f, shAmt / kFadeRange);
+    if (fadeAlpha > 0.001f && std::abs (shLevel) > 0.001f)
     {
+        // Level shape needs a rough pivot mean, approximated from the (already smoothed)
+        // display magnitudes -- exact match isn't required, this is a preview only.
+        float shMean = 0.0f;
+        if (! smoothMag.empty())
+        {
+            float maxMag = 0.0f;
+            for (float mg : smoothMag) maxMag = juce::jmax (maxMag, mg);
+            const float activeThresh = maxMag * 1.0e-3f;
+            double sum = 0.0; int cnt = 0;
+            for (float mg : smoothMag) if (mg > activeThresh) { sum += (double) mg; ++cnt; }
+            shMean = (float) (sum / juce::jmax (1, cnt));
+        }
+        const float invShMean = 1.0f / juce::jmax (1.0e-9f, shMean);
+        const float x0 = std::log2 (juce::jmax (20.0f, shFreq));
+
+        auto gToY = [H] (float gain)
+        {
+            return (1.0f - juce::jlimit (0.0f, 2.0f, gain) * 0.5f) * (float) H;
+        };
+
         juce::Path curve;
         for (int x = 0; x < W; ++x)
         {
             float t    = (float) x / (float) (W - 1);
             float freq = std::exp (logMin + t * (logMax - logMin));
-            float gain = SpectralEngine::filterGain (freq, fTone, fAmt);
-            float y    = (1.0f - gain) * (float) H;
+            float fbin = freq / binToHz;
+
+            float ratio = 1.0f;
+            if (shMean > 1.0e-9f && fbin >= 0.0f && fbin < (float) numBins)
+            {
+                int   k  = juce::jlimit (0, numBins - 1, (int) fbin);
+                float mg = smoothMag[(size_t) k];
+                if (mg > shMean * 1.0e-3f)
+                    ratio = juce::jlimit (0.01f, 100.0f, mg * invShMean);
+            }
+
+            const float bx = std::log2 (juce::jmax (20.0f, freq));
+            const float L  = juce::jlimit (-1.0f, 1.0f,
+                    ShapeCurves::shapeL (shShape, bx, x0, shWidth, shCount, shLevel, ratio)) * shAmt;
+            const float tm = L * (1.0f - shMode);
+            const float gOut = (tm >= 0.0f) ? std::exp (tm * 1.386294361f)
+                                             : (1.0f + tm) * (1.0f + tm);
+            float y = gToY (gOut);
             if (x == 0) curve.startNewSubPath ((float) x, y);
             else        curve.lineTo ((float) x, y);
         }
-        g.setColour (juce::Colour::fromHSV (0.13f, 0.55f, 1.0f, 0.85f));
+        g.setColour (juce::Colour::fromHSV (0.13f, 0.55f, 1.0f, 0.85f * fadeAlpha));
         g.strokePath (curve, juce::PathStrokeType (1.5f));
     }
 

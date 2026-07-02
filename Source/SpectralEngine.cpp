@@ -1,12 +1,16 @@
 #include "SpectralEngine.h"
+#include "ShapeCurves.h"
 
 namespace
 {
     constexpr int   kOverlap   = 4;      // 75% overlap, hop = fftSize/4
-    constexpr float kCompFloor = 0.05f;  // clamp on 1/filterGain to avoid blow-up
+    constexpr float kCompFloor = 0.05f;  // clamp on 1/momentary-gain to avoid blow-up
     constexpr float kDecayFloor = 1.0e-4f;
     constexpr float kInjFloor  = 0.05f;  // min injection scale (so capture works at loss=0)
-    constexpr float kCompressRate = 0.05f; // per-frame strength of the compress reshaping
+    constexpr float kPermScale = 0.23f;  // permanent-mode per-frame strength (coupled with
+                                          // ShapeCurves' 4.6 normaliser -- see plan doc's
+                                          // "compress equivalence": don't change independently)
+    constexpr float kLn4       = 1.386294361f; // momentary boost ceiling: +12 dB at L=1
     constexpr float kPhaseNoise   = 0.15f; // rad of per-frame phase jitter when noise is on
 }
 
@@ -59,15 +63,6 @@ void SpectralEngine::configure (int fftOrder)
     for (int k = 0; k < numBins; ++k)
         expectedAdv[(size_t) k] = juce::MathConstants<float>::twoPi
                                   * (float) k * (float) hopSize / (float) fftSize;
-}
-
-float SpectralEngine::filterGain (float freqHz, float toneHz, float amt)
-{
-    const float oct  = std::log2 (juce::jmax (20.0f, freqHz));
-    const float cent = std::log2 (juce::jmax (20.0f, toneHz));
-    const float d    = oct - cent;
-    const float bell = std::exp (-(d * d) / (2.0f * kSigmaOct * kSigmaOct));
-    return 1.0f - amt * (1.0f - bell);
 }
 
 void SpectralEngine::setOrder (int fftOrder)
@@ -136,42 +131,34 @@ void SpectralEngine::processFrame (const Params& p)
 
     drainBrush(); // apply any pending GUI edits to the held spectrum
 
-    // --- compress: reshape each tone's level relative to the average level.
-    // >0 expands (louder tones get louder, quiet ones quieter -> purify); <0 homogenises
-    // (quiet tones rise, loud ones drop). Applied gently per frame so it acts over time.
-    if (std::abs (p.compress) > 1.0e-4f)
+    // --- shaper: per-bin signed change L[k] in [-1..+1] from a cross-faded math curve
+    // (ShapeCurves.h), applied as a permanent multiply on S (compounding, replaces
+    // Compress) and/or a momentary output gain (non-destructive, replaces Filter),
+    // cross-faded by shapeMode. The Level shape needs the pivot mean of the *active*
+    // bins (as Compress did); the other shapes are purely positional and ignore it.
+    const bool shaperActive = p.shapeAmt > 1.0e-4f && std::abs (p.shapeLevel) > 1.0e-4f;
+    float shapeMean = 0.0f, activeThresh = 0.0f;
+    if (shaperActive)
     {
         // pivot = mean level of the *active* bins (ignore the empty noise floor, else the
         // pivot collapses to ~0 and every real tone saturates the same way).
         float maxMag = 0.0f;
         for (int k = 1; k < numBins; ++k) maxMag = juce::jmax (maxMag, std::abs (S[(size_t) k]));
-        if (maxMag > 1.0e-9f)
+        activeThresh = maxMag * 1.0e-3f;
+        double sum = 0.0; int cnt = 0;
+        for (int k = 1; k < numBins; ++k)
         {
-            const float active = maxMag * 1.0e-3f; // activity threshold
-            double sum = 0.0; int cnt = 0;
-            for (int k = 1; k < numBins; ++k)
-            {
-                float a = std::abs (S[(size_t) k]);
-                if (a > active) { sum += a; ++cnt; }
-            }
-            const float mean = (float) (sum / juce::jmax (1, cnt));
-            const float e    = p.compress * kCompressRate;
-            const float invM = 1.0f / juce::jmax (1.0e-9f, mean);
-            for (int k = 1; k < numBins; ++k)
-            {
-                float a = std::abs (S[(size_t) k]);
-                if (a <= active) continue; // leave the noise floor alone
-                float ratio = juce::jlimit (0.01f, 100.0f, a * invM);
-                S[(size_t) k] *= std::pow (ratio, e); // louder-than-mean up (e>0), quieter down
-            }
+            float a = std::abs (S[(size_t) k]);
+            if (a > activeThresh) { sum += a; ++cnt; }
         }
+        shapeMean = (float) (sum / juce::jmax (1, cnt));
     }
+    const float invShapeMean = 1.0f / juce::jmax (1.0e-9f, shapeMean);
+    const float shapeX0 = std::log2 (juce::jmax (20.0f, p.shapeFreq));
 
     // --- per-hop scalars
     // loss -> decay multiplier per hop. loss=0 -> 1 (eternal), loss=1 -> fast.
     const float lossDecay = std::exp (-p.loss * (float) hopSize / (float) sampleRate * 6.0f);
-    // attack -> input smoothing coefficient. attack=0 -> 1 (instant).
-    const float aCoef = std::exp (-p.attack * 9.0f);
     // Injection scale: with the (now phase-coherent) feedback loop, feeding integrates.
     // Scaling by (1-lossDecay) makes the steady-state held level ~= feed * input level
     // instead of building up by 1/(1-lossDecay). Floored so capture still works at loss=0.
@@ -188,12 +175,44 @@ void SpectralEngine::processFrame (const Params& p)
     for (int k = 0; k < numBins; ++k)
     {
         const float binFreq = (float) k * refFreq;
-        // The filter is now a NON-DESTRUCTIVE output shaping: it never enters the held
-        // state's decay, so turning it off restores the held waves intact. Input is still
-        // compensated by 1/gFilt so fed tones come out as if there were no filter.
-        const float gFilt = (k > 0) ? filterGain (binFreq, p.filterTone, p.filterAmt) : 1.0f;
-        const float comp  = 1.0f / juce::jmax (kCompFloor, gFilt); // input compensation
-        const float decay = juce::jmax (kDecayFloor, lossDecay);   // loss only (no filter)
+
+        // --- shaper: L[k] in [-1..+1]. ratio=1 makes the Level-shape component a
+        // no-op (used for bin 0 and inactive/noise-floor bins, mirroring the old
+        // Compress leaving them untouched).
+        float L = 0.0f;
+        if (shaperActive && k > 0)
+        {
+            float ratio = 1.0f;
+            if (shapeMean > 1.0e-9f)
+            {
+                float a = std::abs (S[(size_t) k]);
+                if (a > activeThresh)
+                    ratio = juce::jlimit (0.01f, 100.0f, a * invShapeMean);
+            }
+            const float x0 = std::log2 (juce::jmax (20.0f, binFreq));
+            L = juce::jlimit (-1.0f, 1.0f,
+                    ShapeCurves::shapeL (p.shape, x0, shapeX0, p.shapeWidth, p.shapeCount,
+                                        p.shapeLevel, ratio)) * p.shapeAmt;
+        }
+
+        const bool hasL = std::abs (L) > 1.0e-9f;
+
+        // permanent: gently reshape the held state itself (compounds over frames, like
+        // the old Compress/brush).
+        if (hasL && p.shapeMode > 1.0e-4f)
+            S[(size_t) k] *= std::exp (L * p.shapeMode * kPermScale);
+
+        // momentary: non-destructive output gain (replaces the old filter). Only cuts
+        // are compensated at injection, so live input isn't attenuated by boosts.
+        float gOut = 1.0f;
+        if (hasL && p.shapeMode < 0.9999f)
+        {
+            const float tm = L * (1.0f - p.shapeMode);
+            gOut = (tm >= 0.0f) ? std::exp (tm * kLn4)
+                                 : (1.0f + tm) * (1.0f + tm); // smooth to 0 at tm = -1
+        }
+        const float comp  = 1.0f / juce::jmax (kCompFloor, juce::jmin (1.0f, gOut));
+        const float decay = juce::jmax (kDecayFloor, lossDecay); // loss only
 
         std::complex<float> x { fftData[(size_t) (2 * k)], fftData[(size_t) (2 * k + 1)] };
 
@@ -211,9 +230,8 @@ void SpectralEngine::processFrame (const Params& p)
         }
         prevPhase[(size_t) k] = phi; // always tracked (bookkeeping; does not reach audio)
 
-        // attack: smooth the fed input spectrum toward x
         std::complex<float>& xs = Xs[(size_t) k];
-        xs += (x - xs) * aCoef;
+        xs = x; // attack was removed; input is fed in unsmoothed
 
         // free-run phasor at the tracked frequency (+ optional phase noise injected into
         // the frequency tracking), inject compensated input, decay (loss). The noise is
@@ -226,8 +244,8 @@ void SpectralEngine::processFrame (const Params& p)
         sk *= decay;
         S[(size_t) k] = sk;
 
-        // output is the held state shaped by the filter (non-destructive)
-        const std::complex<float> outBin = sk * gFilt;
+        // output is the held state shaped by the momentary gain (non-destructive)
+        const std::complex<float> outBin = sk * gOut;
         fftData[(size_t) (2 * k)]     = outBin.real();
         fftData[(size_t) (2 * k + 1)] = outBin.imag();
 

@@ -31,7 +31,8 @@ private:
 
     SpectrumDisplay display;
 
-    Knob feed, loss, output, compress, filterAmt, filterTone;
+    Knob feed, loss, output;
+    Knob shapeAmt, shapeMode, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel;
 
     juce::Label    sizeLabel;
     juce::ComboBox sizeBox;

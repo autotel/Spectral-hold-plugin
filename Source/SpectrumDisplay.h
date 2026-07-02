@@ -43,9 +43,14 @@ private:
     double sampleRate = 44100.0;
     int    fftSize = 0;
 
-    // filter curve (drawn only when amount > 0)
-    std::atomic<float>* pFiltAmt  = nullptr;
-    std::atomic<float>* pFiltTone = nullptr;
+    // shaper curve overlay (drawn only when amount * |level| > 0)
+    std::atomic<float>* pShapeAmt   = nullptr;
+    std::atomic<float>* pShapeMode  = nullptr;
+    std::atomic<float>* pShape      = nullptr;
+    std::atomic<float>* pShapeFreq  = nullptr;
+    std::atomic<float>* pShapeWidth = nullptr;
+    std::atomic<float>* pShapeCount = nullptr;
+    std::atomic<float>* pShapeLevel = nullptr;
 
     // brush cursor state (message thread / paint only)
     juce::Point<float> mousePos;

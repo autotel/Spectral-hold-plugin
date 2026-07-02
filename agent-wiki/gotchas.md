@@ -3,12 +3,18 @@
 Read this before "fixing" something that looks wrong — it probably isn't.
 
 ## DSP
-- **Filter gain coupling is intentional.** Fed input is compensated by `1/gFilt`, so live
-  input is unaffected by the filter; only the *held tail* is shaped. This is the spec's
-  "in/out relationship is always the same" invariant. Don't normalise it away.
-- **No separate output filter.** The filter is a frequency-dependent *decay* inside the
-  held-phasor update, not a post EQ. Looking for an output multiply by the bell? There
-  isn't one by design.
+- **Filter and Compress were removed** (see [plan-spectral-shaper.md](plan-spectral-shaper.md)),
+  replaced by the unified **shaper** (`ShapeCurves.h`, `shape`/`shapeMode`/etc. params). If
+  you're hunting for `filterAmt`, `filterTone`, `compress`, or `SpectralEngine::filterGain`,
+  they're gone on purpose — see [dsp-design.md](dsp-design.md#the-spectral-shaper).
+- **Momentary-cut compensation is intentional.** Fed input is compensated by
+  `1/max(kCompFloor, min(1,gOut))` for momentary *cuts* only (not boosts), so live input is
+  unaffected by a momentary cut; only the *held tail* is shaped. This is the old filter's
+  "in/out relationship is always the same" invariant, kept for cuts. Don't normalise it away.
+- **Momentary shaping is a pure output multiply, not a decay.** `S` decays by `lossDecay`
+  only; the momentary gain (`gOut`) is applied when writing to `fftData`/the display
+  snapshot, never fed back into `S`. Turning momentary Amount down restores the held state
+  exactly — that's the point.
 - **Phasors free-run (`rot[k]`).** This is what makes it a spectral *hold* (continuous
   sinusoids) instead of a grain looper. Removing the rotation reintroduces grain looping —
   exactly what the spec forbids.
