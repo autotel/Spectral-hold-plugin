@@ -202,7 +202,7 @@ int main()
             return rms (buf2.data(), block);
         };
         SpectralEngine::Params cut; cut.feed = 0.0f; cut.loss = 0.0f;
-        cut.shapeAmt = 1.0f; cut.shapeMode = 0.0f; cut.shape = 3.0f;
+        cut.shapeAmt = 1.0f; cut.shapeMode = 0.0f; cut.shape = 4.0f; // Sine is index 4 (after Harmonics)
         cut.shapeFreq = 1000.0f; cut.shapeWidth = 0.35f; cut.shapeCount = 0.0f; cut.shapeLevel = -1.0f;
         float cutRms = holdRms (cut);
 
@@ -252,6 +252,46 @@ int main()
                   && p4 < f4 * 0.3f && p1 > f1 * 0.7f; // passed only the peak tone
         printf ("[%s] shaper spikes subtractive: reject(1k=%.4f,4k=%.4f) pass(1k=%.4f,4k=%.4f)\n",
                 ok ? "PASS" : "FAIL", r1, r4, p1, p4);
+        fails += ok ? 0 : 1;
+    }
+
+    // 6d) shaper Harmonics shape is subtractive overtone/undertone band-select: tones at
+    // 1 kHz (the fundamental) and 2.5 kHz (NOT in 1 kHz's harmonic series). level>0
+    // rejects the harmonic series (cuts 1k, keeps 2.5k); level<0 passes only the series
+    // (keeps 1k, cuts 2.5k). count=0.3 -> ~3.6 harmonics/side, plenty to cover 2k/3k
+    // without touching 2.5k. Momentary (mode=0), read per-bin.
+    {
+        const int B1k   = (int) std::lround (1000.0 * 4096.0 / sr);
+        const int B2500 = (int) std::lround (2500.0 * 4096.0 / sr);
+        std::vector<float> m, ph, buf2 (block);
+        eng.setOrder (12); eng.reset();
+        double a = 0.0, b = 0.0, wa = 2.0 * M_PI * 1000.0 / sr, wb = 2.0 * M_PI * 2500.0 / sr;
+        for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+        {
+            for (int i = 0; i < block; ++i) { buf2[i] = 0.4f * (float) std::sin (a) + 0.4f * (float) std::sin (b); a += wa; b += wb; }
+            eng.process (buf2.data(), buf2.data(), block, p);
+        }
+        auto measure = [&] (float level, float shapeParam, float& at1k, float& at2500)
+        {
+            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f;
+            h.shapeAmt = 1.0f; h.shapeMode = 0.0f; h.shape = shapeParam;
+            h.shapeFreq = 1000.0f; h.shapeWidth = 0.5f; h.shapeCount = 0.3f; h.shapeLevel = level;
+            // run several frames so the display snapshot reflects the shaped output (mode=0
+            // is non-destructive, so S is unchanged and each measure sees the same held tones)
+            for (int blk = 0; blk < 24; ++blk) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); }
+            int n = 0; for (int t = 0; t < 8 && n == 0; ++t) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); n = eng.copyDisplay (m, ph); }
+            at1k = m[(size_t) B1k]; at2500 = m[(size_t) B2500];
+        };
+        float f1, f2, r1, r2, p1, p2, x1, x2;
+        measure (0.0f,  3.0f, f1, f2);  // flat reference
+        measure (+1.0f, 3.0f, r1, r2);  // reject series -> 1k cut, 2.5k kept
+        measure (-1.0f, 3.0f, p1, p2);  // pass only series -> 2.5k cut, 1k kept
+        measure (-1.0f, 2.5f, x1, x2);  // mid crossfade (Spikes<->Harmonics) stays finite
+        bool ok = r1 < f1 * 0.3f && r2 > f2 * 0.7f    // rejected the fundamental, kept 2.5k
+                  && p2 < f2 * 0.3f && p1 > f1 * 0.7f  // passed only the harmonic series
+                  && std::isfinite (x1) && std::isfinite (x2);
+        printf ("[%s] shaper harmonics subtractive: reject(1k=%.4f,2.5k=%.4f) pass(1k=%.4f,2.5k=%.4f)\n",
+                ok ? "PASS" : "FAIL", r1, r2, p1, p2);
         fails += ok ? 0 : 1;
     }
 

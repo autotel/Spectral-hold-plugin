@@ -79,7 +79,7 @@ elsewhere** (the old filter bell drifted between DSP and GUI once; don't repeat 
 
 Each bin gets a signed change `L[k] ∈ [-1..+1]` from `ShapeCurves::shapeL(shape, x, x0,
 width, count, level, ratio)`, where `x = log2(binFreq)`, `x0 = log2(shapeFreq)`. `shape`
-(0..3) linearly cross-fades between two adjacent named shapes:
+(0..4) linearly cross-fades between two adjacent named shapes:
 
 - **Level** (0, replaces Compress): `L = level·sign(u)·|u|^γ · win(x)`, where
   `u = ln(ratio)/4.6`, `ratio = |S[k]|/mean(active bins)` (same active-bin pivot as the
@@ -95,7 +95,16 @@ width, count, level, ratio)`, where `x = log2(binFreq)`, `x0 = log2(shapeFreq)`.
   **purely subtractive** and sign-split like the Sigmoid: `level>0 → L = -level·env`
   (reject/notch the peaks), `level<0 → L = level·(1-env)` (pass **only** the peaks, cut
   everything between), flat no-op at `level=0`. Always attenuates (`L ≤ 0`).
-- **Sine** (3, replaces Filter): `L = level·cos(2π·ρ·(x-x0))·env(x)`, `ρ` cycles/octave
+- **Harmonics** (3): spikes at `x0 ± log2(n)`, `n=1,2,3,…` — overtones (`n·f0`) on the `+`
+  side, undertones (`f0/n`) on the `-` side, fundamental shared at `n=1`. Same
+  subtractive sign-split as Spikes (`level>0` rejects/notches the harmonic series,
+  `level<0` passes only the series — isolates everything harmonically related to
+  `shapeFreq`). Per bin only the 2 nearest harmonics on that side are evaluated (cheap,
+  same trick as Spikes); each harmonic's gaussian half-width is clamped to
+  `0.3·log2((n+1)/n)` (the local spacing) so high harmonics stay distinct instead of
+  smearing together. `count` controls how many overtone/undertone pairs are active
+  (0 = fundamental only, 1 = 12 pairs/side — same slow ramp as Spikes' `count`).
+- **Sine** (4, replaces Filter): `L = level·cos(2π·ρ·(x-x0))·env(x)`, `ρ` cycles/octave
   from `width`, `env` a gaussian window like Level's that flattens as `count → 1`. At
   `level=-1, count≈0` this is a single bell cut = the old filter.
 

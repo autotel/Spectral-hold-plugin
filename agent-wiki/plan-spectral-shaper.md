@@ -1,8 +1,7 @@
 # PLAN — Spectral Shaper (branch `exp/spectral-shaper`)
 
-**Status: phase 1 implemented** (engine, processor, editor, display overlay, tests, wiki
-all updated on this branch; `./build.sh` green). **Phase 2 (Harmonics shape) is planned
-but NOT implemented — see the "Phase 2" section below and implement from it.**
+**Status: phase 1 AND phase 2 implemented** (engine, processor, editor, display overlay,
+tests, wiki all updated on this branch; `./build.sh` green, 11/11 tests pass).
 Kept as design-rationale reference — the
 live behavior lives in `Source/ShapeCurves.h` / `SpectralEngine.cpp`; see
 [dsp-design.md](dsp-design.md#the-spectral-shaper) and [parameters.md](parameters.md)
@@ -191,10 +190,11 @@ State compat: old sessions' `filterAmt/filterTone/compress` values are silently 
 4. Display overlay.
 5. Wiki pass + this file's status flip.
 
-## Phase 2 — Harmonics shape (PLANNED, not yet implemented)
+## Phase 2 — Harmonics shape (IMPLEMENTED)
 
-**Status: approved plan, implement next** (written for a smaller model; everything below
-is decided — no design questions left). A fifth shape: a comb of **overtones and
+**Status: implemented** as planned below — `ShapeCurves::harmonicsShape`, index 3
+(Sine moved to 4), `shape` APVTS range 0..4, new test "shaper harmonics subtractive"
+in `test_main.cpp`. A fifth shape: a comb of **overtones and
 undertones around the centre frequency** — spikes at `n·f0` (overtones) and `f0/n`
 (undertones), `n = 1, 2, 3, …`, with the fundamental at `shapeFreq` shared by both series.
 

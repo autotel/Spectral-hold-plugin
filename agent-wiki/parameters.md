@@ -13,7 +13,7 @@ Freq, Width, Count, Level (the spectral **shaper** — see below).
 | Output `output`     | 0 .. 2         | 1.0     | Final output level (linear gain), applied **before** the limiter so it still protects ±1. |
 | Amount `shapeAmt`   | 0 .. 1         | 1.0     | Global depth of the shaper; scales `L[k]` before it's applied. |
 | Mode `shapeMode`    | 0 .. 1         | 0.0     | Momentary (0, output-only, non-destructive) ↔ permanent (1, fed into the held state, compounding). Continuous cross-fade. |
-| Shape `shape`       | 0 .. 3         | 0.0     | Cross-fades **Level(0) → Sigmoid(1) → Spikes(2) → Sine(3)**. |
+| Shape `shape`       | 0 .. 4         | 0.0     | Cross-fades **Level(0) → Sigmoid(1) → Spikes(2) → Harmonics(3) → Sine(4)**. |
 | Freq `shapeFreq`    | 20 .. 20000 Hz | 1000    | Curve centre, log-skewed range (`NormalisableRange` skew 0.25). Meaning depends on shape (§ below). |
 | Width `shapeWidth`  | 0 .. 1         | 0.5     | Width/steepness/spacing; meaning per shape. |
 | Count `shapeCount`  | 0 .. 1         | 1.0     | Extent/repetition; meaning per shape. |
@@ -24,7 +24,7 @@ Freq, Width, Count, Level (the spectral **shaper** — see below).
 | Save sound (GUI only)   | bool       | off     | When on, the saved preset **includes the held spectral state** (per-engine S/omega/phase/Xs), so reloading restores the ongoing frozen sound. |
 
 **Attack** was removed — lowering Feed gives the same slowed-onset effect.
-**Filter and Compress were removed** — replaced by the shaper (`shape=3, level<0` reproduces
+**Filter and Compress were removed** — replaced by the shaper (`shape=4, level<0` reproduces
 the old Filter; `shape=0, width=0.5, count=1, mode=1` reproduces the old Compress exactly).
 
 ## The spectral shaper
@@ -38,7 +38,8 @@ Freq/Width/Count take on a different meaning:
 | **Level** (0) | window centre (inert at count=1) | extremes-vs-mean warp (0.5 = old Compress) | spectral extent of the effect (1 = everywhere) | strength, as old Compress |
 | **Sigmoid** (1) | slope position | ramp width | unused (v1) | >0 = highpass, <0 = lowpass, 0 = flat |
 | **Spikes** (2) | pattern centre | spike spacing | 1 spike → covers whole spectrum | subtractive band-select: >0 = **reject** peaks (notch), <0 = pass **only** peaks (cut the rest), flat at 0 |
-| **Sine** (3) | pattern centre (phase) | cycles/octave | 1 lobe → repeats across spectrum | -1..+1, sign flips cut/boost |
+| **Harmonics** (3) | fundamental | spike width | 0 = fundamental only → 12 overtone/undertone pairs/side | subtractive band-select, same sign convention as Spikes: >0 = **reject** the harmonic series, <0 = pass **only** the series (isolate tones related to Freq), flat at 0 |
+| **Sine** (4) | pattern centre (phase) | cycles/octave | 1 lobe → repeats across spectrum | -1..+1, sign flips cut/boost |
 
 ## Notes
 - **Spectral brush** (not a DAW parameter): drag on the display to permanently boost/cut the

@@ -23,7 +23,7 @@ public:
         // old Filter + Compress). See ShapeCurves.h / agent-wiki/dsp-design.md.
         float shapeAmt   = 1.0f;    // 0..1  global depth
         float shapeMode  = 0.0f;    // 0..1  momentary (0, output-only) <-> permanent (1, fed into S)
-        float shape      = 0.0f;    // 0..3  cross-fades Level/Sigmoid/Spikes/Sine
+        float shape      = 0.0f;    // 0..4  cross-fades Level/Sigmoid/Spikes/Harmonics/Sine
         float shapeFreq  = 1000.0f; // Hz, curve centre (log-mapped)
         float shapeWidth = 0.5f;    // 0..1  width/steepness/spacing, meaning per shape
         float shapeCount = 1.0f;    // 0..1  extent/repetition, meaning per shape

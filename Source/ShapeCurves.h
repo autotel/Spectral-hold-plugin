@@ -11,7 +11,7 @@
 // bell; don't repeat that drift).
 namespace ShapeCurves
 {
-    constexpr int kNumShapes = 4; // Level, Sigmoid, Spikes, Sine (shape param 0..3)
+    constexpr int kNumShapes = 5; // Level, Sigmoid, Spikes, Harmonics, Sine (shape param 0..4)
 
     inline float sign (float v) { return v > 0.0f ? 1.0f : (v < 0.0f ? -1.0f : 0.0f); }
 
@@ -79,7 +79,45 @@ namespace ShapeCurves
                               :  level * (1.0f - env);  // = -|level|*(1-env): pass only peaks
     }
 
-    // --- shape 3: Sine (replaces Filter) -----------------------------------------
+    // --- shape 3: Harmonics (subtractive overtone/undertone comb) ----------------
+    // Spikes at x0 +- log2(n), n=1,2,3,... (overtones above x0, undertones below --
+    // i.e. n*f0 and f0/n). Same subtractive sign-split as Spikes: level>0 notches the
+    // harmonic series out, level<0 passes ONLY the harmonic series, flat at level=0.
+    inline float harmonicsShape (float x, float x0, float width, float count, float level)
+    {
+        const float sigma0 = 0.03f * std::pow (2.0f, width * 3.5f); // base spike half-width, oct
+        const float nMaxF  = count * 12.0f;                          // harmonics/side at full knob
+        const float D      = std::abs (x - x0);                      // octaves from fundamental
+
+        float sum = 0.0f;
+        if (D < 1.0e-6f)
+        {
+            // at the fundamental itself: nearest candidate is n=1 on both sides
+            const float a1  = std::clamp (nMaxF - (1.0f - 1.0f) + 1.0f, 0.0f, 1.0f);
+            const float gap = std::log2 (2.0f / 1.0f);
+            const float s1  = std::min (sigma0, 0.3f * gap);
+            sum = a1 * std::exp (-(D * D) / (2.0f * s1 * s1));
+        }
+        else
+        {
+            const float q = std::pow (2.0f, D); // freq/f0 (overtone side) or f0/freq (undertone side)
+            const int   nLo = std::max (1, (int) std::floor (q));
+            for (int n : { nLo, nLo + 1 })
+            {
+                const float an  = std::clamp (nMaxF - ((float) n - 1.0f) + 1.0f, 0.0f, 1.0f);
+                if (an <= 0.0f) continue;
+                const float gap = std::log2 ((float) (n + 1) / (float) n); // local spacing, shrinks with n
+                const float sN  = std::min (sigma0, 0.3f * gap);           // keep neighbours distinct
+                const float dd  = D - std::log2 ((float) n);
+                sum += an * std::exp (-(dd * dd) / (2.0f * sN * sN));
+            }
+        }
+        const float env = std::clamp (sum, 0.0f, 1.0f);
+        return level >= 0.0f ? -level * env            // reject the harmonic series (notch comb)
+                              :  level * (1.0f - env);  // pass ONLY the harmonic series
+    }
+
+    // --- shape 4: Sine (replaces Filter) -----------------------------------------
     inline float sineShape (float x, float x0, float width, float count, float level)
     {
         constexpr float kTwoPi = 6.283185307f;
@@ -89,7 +127,7 @@ namespace ShapeCurves
         return level * std::cos (kTwoPi * rho * (x - x0)) * env;
     }
 
-    // Cross-fade between the two adjacent shapes named by `shapeParam` (0..3).
+    // Cross-fade between the two adjacent shapes named by `shapeParam` (0..4).
     inline float shapeLRaw (int idx, float x, float x0, float width, float count,
                              float level, float ratio)
     {
@@ -98,6 +136,7 @@ namespace ShapeCurves
             case 0:  return levelShape (ratio, width, level) * levelWindow (x, x0, count);
             case 1:  return sigmoidShape (x, x0, width, level);
             case 2:  return spikesShape (x, x0, width, count, level);
+            case 3:  return harmonicsShape (x, x0, width, count, level);
             default: return sineShape (x, x0, width, count, level);
         }
     }

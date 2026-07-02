@@ -58,7 +58,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shape", 1 }, "Shape",
-        NormalisableRange<float> (0.0f, 3.0f), 0.0f)); // Level/Sigmoid/Spikes/Sine
+        NormalisableRange<float> (0.0f, 4.0f), 0.0f)); // Level/Sigmoid/Spikes/Harmonics/Sine
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shapeFreq", 1 }, "Shape Freq",
