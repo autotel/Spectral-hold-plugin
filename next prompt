@@ -1,0 +1,15 @@
+Create a new branch `exp/reverb` from `exp/spectral-shaper`. Then implement the output
+plate reverb exactly as specified in `agent-wiki/plan-reverb.md` — read that file first,
+plus `agent-wiki/README.md` and the pages it links (house rules apply: update the wiki in
+the same task, `./build.sh` must be green with all tests passing).
+
+Follow the plan's §7 implementation order, one buildable step at a time:
+1. `Source/PlateReverb.{h,cpp}` (Dattorro plate, constants in plan §4) + the unit tests
+   from plan §6 in `test_main.cpp`. Iterate until tests pass.
+2. Processor wiring: 5 new APVTS params (`revMix/revDecay/revSize/revDamp/revPredelay`),
+   reverb between output gain and limiter, mono-sum in / stereo out, hard bypass +
+   reset at mix=0, tail length report.
+3. Editor: third knob row — Mix, Decay, Size, Damp, Predelay.
+4. Wiki updates per plan §8, flip the plan's status banner.
+
+Do not change SpectralEngine. Commit in logical steps on `exp/reverb`.
