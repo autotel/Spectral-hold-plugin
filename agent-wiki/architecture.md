@@ -11,21 +11,27 @@
   contract as `SpectralEngine` (`juce_dsp` only, unit-testable). Cross-channel like the
   limiter — lives in the processor, not per-engine. See
   [plan-reverb.md](plan-reverb.md) for the full design.
-- `PluginEditor.{h,cpp}` — `AudioProcessorEditor`. Rotary knobs (APVTS attachments) in
-  three rows, the FFT-size `ComboBox`, and the spectrum display.
+- `DryDelay.h` — header-only latency-aligned dry path for the global Dry/Wet mix.
+- `PluginEditor.{h,cpp}` — `AudioProcessorEditor`. Persistent performance row + a
+  **Shaper | Harmonize | Reverb** tab strip switching one shared knob row, the FFT-size
+  `ComboBox`, the spectrum display, and the hover **info bar**.
 - `SpectrumDisplay.{h,cpp}` — the custom "lighting" spectrum view (its own 30 Hz timer).
 - `test_main.cpp` — offline smoke-test (`SpectralHoldTest` target).
 
 ## Signal flow
 ```
-input ──> [engine L] ──┐
-input ──> [engine R] ──┤──> output gain ──> plate reverb ──> linked slow limiter ──> output
-                       (per-channel spectral hold)  (mono-sum in,      (cross-channel gain)
-                                                      wet/dry stereo out)
+        ┌--(dry, delayed fftSize)--------──┐
+input ──> [engine L] ──┐                   v
+input ──> [engine R] ──┤─> dry/wet mix ─> output gain ─> plate reverb ─> linked limiter ─> out
+        ^              (per-channel)                     (mono-sum in,   (cross-channel)
+        └──(revFeed: last block's wet, clamped ±1)───────┘ stereo out)
 ```
 Each engine: sliding ring buffers → per-hop STFT frame → held-phasor update → IFFT →
 overlap-add. See [dsp-design.md](dsp-design.md). The reverb is a hard bypass at
-`revMix = 0` (see [gotchas.md](gotchas.md)).
+`revMix = 0` and `revFeed` only runs while the reverb does (see [gotchas.md](gotchas.md)).
+The dry path (`DryDelay.h`) is a plain ring delayed by the engine's `fftSize` so
+dry and wet stay time-aligned; captured *before* the revFeed injection, so it is
+genuinely untouched input.
 
 ## Threading model
 - **Audio thread:** `processBlock` → engines → limiter. No allocations (buffers

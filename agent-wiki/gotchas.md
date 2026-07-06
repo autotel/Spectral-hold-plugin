@@ -101,3 +101,21 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   set to the same rate before touching anything else.
 - Reverb lives in `PluginProcessor` (cross-channel, mono-summed), not per-engine — same
   category as the limiter.
+- **`revFeed`'s ±1 clamp on the injected wet is load-bearing.** The feedback tap is
+  *pre-limiter*, so nothing else bounds the loop; without the clamp it grows
+  exponentially at high decay / low loss (the worst-case test measured ~1e32). Clamped,
+  the worst case degenerates to the documented eternal-hold linear growth, and the
+  limiter caps the output. Don't remove it, and don't "fix" it with a hidden compressor.
+
+## Integration decisions (exp/integration)
+- **Harmonize has no momentary/permanent mode knob on purpose.** It must rewrite `omega`
+  for tones to converge over time; a momentary variant is just a static detune. Feed > 0
+  already gives the momentary feel (input tracking self-heals the edit). Don't add one.
+- **The dry path is delayed by `fftSize` on purpose** (`DryDelay.h`). Mixing undelayed
+  dry against the engine's latent output combs. If Dry/Wet sounds "flangey", check the
+  delay length matches `engine.getLatency()`, don't remove the delay.
+- **Param creation order is the Push/Maschine page grouping** (8 per page). Don't
+  alphabetize or "tidy" `createLayout()` — order is meaningful. Page 2 (shaper) has 7 +
+  `revMix` spilling into slot 8; accepted, not a bug.
+- **Tabs are view-only.** All modules process regardless of which tab is visible; the
+  display overlays follow the active tab so they don't stack.

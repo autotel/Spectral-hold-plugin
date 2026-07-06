@@ -12,6 +12,17 @@
 - **Phase → hue**, very slightly: `pt = (phase+π)/2π`, `hue = 0.72 - 0.24·pt`
   (purple-blue → green-blue), saturation only **0.25** so lines stay near-white.
 
+## Overlay gating by editor tab
+Both module overlays (shaper curve, harmonize influence) exist in `SpectrumDisplay`, but
+only the **active editor tab's** overlay is drawn (`setOverlayMode`: 0 shaper, 1
+harmonize, 2 none — reverb has no overlay). View-only: the DSP runs regardless of tab.
+The active tab is persisted in the state tree (`uiTab`, like `fftOrder`).
+
+## Info bar
+A one-line label at the very bottom of the editor. Every control registers a description
+via `SpectralHoldEditor::setInfo` (shared `MouseListener`, mouseEnter/mouseExit) —
+Ableton-style. When adding a control, register its text there too.
+
 ## Shaper curve overlay
 - Alpha **fades in/out over `shapeAmt ∈ [0 .. kFadeRange=0.15]`** rather than popping
   on/off at a threshold (`fadeAlpha` in `SpectrumDisplay::paint`) — Level itself still

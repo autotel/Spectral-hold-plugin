@@ -1,9 +1,12 @@
 # PLAN — Integration branch (`exp/integration`)
 
-**Status: NOT implemented — this is the plan.** Create `exp/integration` from `exp/reverb`
-and merge `experimental/harmonize` into it, then do the GUI/param reorganization below.
-When done, flip this banner, update the wiki pages in §9, and make sure `./build.sh` is
-green with the **union** of both branches' tests passing.
+**Status: implemented** on `exp/integration` — merge done per §1, `dryWet` + `revFeed`
+added (revFeed shipped *with* a ±1 clamp on the injected wet: the §4.2 worst-case test
+caught exponential runaway without it, see gotchas.md), params ordered into pages per §3,
+tabbed editor + info bar per §5, all wiki pages updated. `./build.sh` green, 26/26 tests
+(union of both branches + 4 new). Kept as design-rationale reference — current behavior
+is documented in [parameters.md](parameters.md) / [architecture.md](architecture.md) /
+[gotchas.md](gotchas.md) / [gui-display.md](gui-display.md).
 
 ## 0. What integrates with what
 
