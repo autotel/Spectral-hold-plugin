@@ -56,11 +56,6 @@ public:
     // current pitch drift (Hz, signed). Returns the peak count (0 when harmonize is off).
     int copyPeaks (std::vector<float>& freq, std::vector<float>& weight, std::vector<float>& drift);
 
-    // Serialize / restore the held spectral state (for "save preset with the ongoing sound").
-    // NOT real-time safe: call with processing stopped or under an external lock.
-    void writeAudioState (juce::MemoryOutputStream&) const;
-    void readAudioState  (juce::MemoryInputStream&);
-
     // Queue a brush edit (message thread): permanently scales the held spectrum around
     // centreFreqHz with a gaussian falloff in log-frequency of half-width sigmaOct octaves.
     // strength in [-1..+1]: +1 strongly boosts, 0 = no change, -1 strongly cuts. Applied on

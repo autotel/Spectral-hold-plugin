@@ -46,12 +46,8 @@ public:
 
     // GUI-only switches (persisted in state, not DAW parameters):
     // - liveMode: report 0 latency (PDC) so the host doesn't delay-compensate, for live use.
-    // - saveWithSound: include the held spectral state in the saved preset.
     void setLiveMode (bool b);
     bool getLiveMode() const      { return liveMode; }
-    void setSaveWithSound (bool b) { saveWithSound = b; }
-    bool getSaveWithSound() const  { return saveWithSound; }
-
     // Active editor tab (0 shaper, 1 harmonize, 2 reverb). GUI-only, persisted in state.
     void setUiTab (int t) { uiTab = t; }
     int  getUiTab() const { return uiTab; }
@@ -122,14 +118,7 @@ private:
 
     // GUI-only switches (persisted manually, see get/setStateInformation)
     bool liveMode = false;
-    bool saveWithSound = false;
     int  uiTab = 0;
-    juce::CriticalSection audioStateLock; // guards engine state vs. preset restore
-
-    // Held audio state restored from a preset but waiting for prepareToPlay (the host may call
-    // setStateInformation BEFORE prepareToPlay, when the engine buffers don't exist yet).
-    juce::MemoryBlock pendingAudioState;
-    void applyAudioState (const juce::MemoryBlock&);
 
     // slow linked limiter state
     float limEnv  = 0.0f;

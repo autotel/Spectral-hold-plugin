@@ -53,7 +53,6 @@ private:
 
     // GUI-only switches (persisted by the processor, not DAW parameters)
     juce::ToggleButton liveButton { "Live (0 PDC)" };
-    juce::ToggleButton saveSoundButton { "Save sound" };
 
     juce::Label  brushLabel;
     juce::Slider brushSizeSlider; // GUI-only brush size, not a DAW parameter

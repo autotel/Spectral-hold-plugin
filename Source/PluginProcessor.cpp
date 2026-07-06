@@ -163,22 +163,6 @@ void SpectralHoldProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     for (auto& d : dryDelay)
         d.prepare (1 << kMaxFftOrder, samplesPerBlock);
     dryScratch.assign ((size_t) juce::jmax (samplesPerBlock, 16), 0.0f);
-
-    // apply any held audio state that was restored from a preset before we were prepared
-    if (pendingAudioState.getSize() > 0)
-    {
-        applyAudioState (pendingAudioState);
-        pendingAudioState.reset();
-    }
-}
-
-void SpectralHoldProcessor::applyAudioState (const juce::MemoryBlock& mb)
-{
-    juce::MemoryInputStream is (mb, false);
-    const int nEng = is.readInt();
-    const juce::ScopedLock sl (audioStateLock);
-    for (int i = 0; i < nEng && i < (int) engines.size(); ++i)
-        engines[(size_t) i].readAudioState (is);
 }
 
 bool SpectralHoldProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -244,7 +228,6 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                              ? pRevFeed->load() * kRevFeedScale : 0.0f;
 
     {
-        const juce::ScopedLock sl (audioStateLock); // block preset restore mid-process
         for (int ch = 0; ch < juce::jmin (numCh, (int) engines.size()); ++ch)
         {
             auto* d = buffer.getWritePointer (ch);
@@ -352,21 +335,7 @@ void SpectralHoldProcessor::getStateInformation (juce::MemoryBlock& dest)
     auto state = apvts.copyState();
     state.setProperty ("fftOrder", fftOrder.load(), nullptr);
     state.setProperty ("liveMode", liveMode, nullptr);
-    state.setProperty ("saveWithSound", saveWithSound, nullptr);
     state.setProperty ("uiTab", uiTab, nullptr);
-
-    if (saveWithSound)
-    {
-        juce::MemoryBlock mb;
-        {
-            juce::MemoryOutputStream os (mb, false);
-            os.writeInt ((int) engines.size());
-            const juce::ScopedLock sl (audioStateLock);
-            for (auto& e : engines)
-                e.writeAudioState (os);
-        }
-        state.setProperty ("audioState", juce::var (mb), nullptr); // base64 in the XML
-    }
 
     std::unique_ptr<juce::XmlElement> xml (state.createXml());
     copyXmlToBinary (*xml, dest);
@@ -382,25 +351,10 @@ void SpectralHoldProcessor::setStateInformation (const void* data, int size)
     apvts.replaceState (tree);
 
     setLiveMode    ((bool) tree.getProperty ("liveMode", false));
-    saveWithSound = (bool) tree.getProperty ("saveWithSound", false);
     uiTab         = juce::jlimit (0, 2, (int) tree.getProperty ("uiTab", 0));
 
     const int ord = (int) tree.getProperty ("fftOrder", fftOrder.load());
     setFftOrder (ord);
-
-    pendingAudioState.reset();
-    if (auto* mbv = tree.getPropertyPointer ("audioState"))
-        if (auto* mb = mbv->getBinaryData())
-        {
-            // The host may call this BEFORE prepareToPlay (engine buffers not allocated yet),
-            // so stash it and apply once prepared. If we're already prepared, apply now.
-            pendingAudioState = *mb;
-            if (prepared)
-            {
-                applyAudioState (pendingAudioState);
-                pendingAudioState.reset();
-            }
-        }
 }
 
 juce::AudioProcessorEditor* SpectralHoldProcessor::createEditor()

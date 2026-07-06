@@ -1,18 +1,18 @@
-Create the integration branch `exp/integration` from `exp/reverb` and implement
-`agent-wiki/plan-integration.md` — read that file first, plus `agent-wiki/README.md` and
-the pages it links (house rules: update the wiki in the same task, `./build.sh` green with
-the union of both branches' tests).
+Create an E <-> W knob (as in east west) that lets the user have multiple held sound buffers. The different tones are not any more held in a 1d space (frequency), but on a 2d space: [frequency,  location]. When the knob is, for example, located in between, tones are recorded at the location 0.5; and they are fade out as the knob gets further from that location. The spots along the e-w line create space for themselves; if we recorded only at the east, then moving west would not fade out the tones towards west. If we, however, added tones at the west, the tones at east would fade out through the knob values toward west till level is zero at the west. However, if we create tones in between east and west, the tones at east would fade out at that middle position, and now the tones added in between would fade out to zero toward west. 
 
-Follow the plan's §8 order, one buildable step at a time:
-1. Merge `experimental/harmonize` into the new branch. Resolve conflicts per plan §1 —
-   especially the `SpectralEngine::processFrame` semantic conflict: `applyHarmonize`
-   goes right after `drainBrush()`, before the shaper precompute. Commit the merge alone.
-2. Reorder `createLayout()` into the plan §3 pages; add `dryWet` (latency-aligned dry
-   path, §4.1) + its test.
-3. Add `revFeed` (§4.2) + stability tests. Droppable if it can't be stabilized.
-4. Editor: persistent row (Feed/Loss/Dry-Wet/Output) + Shaper|Harmonize|Reverb tabs.
-5. Info bar with the plan §5 description texts; overlay gating by active tab.
-6. Wiki updates (§9), flip the plan banner.
 
-Do not modify the Dattorro constants in PlateReverb.cpp or the harmonize constants in
-SpectralEngine.cpp while resolving the merge. Commit in logical steps.
+
+Things to fix: 
+
+- I don't perceive the effect of the reverb feeding back to the held tone. If it is indeed correctly implemented, then it makes no sense to have it.
+- Add a limiter module, output only, with two params: release time and threshold level. I wonder if it could be fit into the first 8 parameters page 
+- harmonize module is not working unless there is some input feed level
+- could the "shaper" "shape" knob display the names of the shapes instead of numbers?
+- when shape level is zero, don't make the line disappear, it only disappears with the amount mechanism
+- harmonic knob should be named "harmonics"
+- shaper/mode should be renamed to feed like in the reverb, and be the last knob on the page
+- Add a "metal" knob to the reverb, which turns the reverb more metallic when turned up
+- let's remove the "save sound" feature
+- in reverb module move the damp knob before size
+- the other pages would need parameters to have their positions adapted too to make sensical pages when used in maschine/push
+- make the knob's shine to be more notorious and make them appear smoothly, if it's reasonably possible.

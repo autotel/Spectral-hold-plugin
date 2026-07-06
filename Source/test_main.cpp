@@ -487,30 +487,6 @@ int main()
         fails += ok ? 0 : 1;
     }
 
-    // audio-state save/restore: a held sound survives a serialize -> fresh engine -> restore
-    {
-        SpectralEngine src; src.prepare (sr, 13); src.setOrder (12); src.reset();
-        std::vector<float> b (block);
-        double a = 0.0, w = 2.0 * M_PI * 750.0 / sr;
-        for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
-        {
-            for (int i = 0; i < block; ++i) { b[i] = 0.5f * (float) std::sin (a); a += w; }
-            src.process (b.data(), b.data(), block, p);
-        }
-        juce::MemoryBlock mb;
-        { juce::MemoryOutputStream os (mb, false); src.writeAudioState (os); }
-
-        SpectralEngine dst; dst.prepare (sr, 13); dst.setOrder (12); dst.reset();
-        { juce::MemoryInputStream is (mb, false); dst.readAudioState (is); }
-
-        SpectralEngine::Params f; f.feed = 0.0f; f.loss = 0.0f;
-        float r = 0.0f;
-        for (int blk = 0; blk < 20; ++blk) { std::fill (b.begin(), b.end(), 0.0f); dst.process (b.data(), b.data(), block, f); r = juce::jmax (r, rms (b.data(), block)); }
-        bool ok = std::isfinite (r) && r > 1.0e-3f; // restored engine sustains the held tone
-        printf ("[%s] audio-state save/restore: tailRMS=%.4f\n", ok ? "PASS" : "FAIL", r);
-        fails += ok ? 0 : 1;
-    }
-
     // ---- PlateReverb (agent-wiki/plan-reverb.md §6) ----
 
     auto rmsRange = [] (const std::vector<float>& x, int from, int to)
