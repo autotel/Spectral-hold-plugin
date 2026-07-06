@@ -1,12 +1,12 @@
 # PLAN — East↔West location knob (`exp/eastwest`)
 
-**Status: implemented** on `exp/eastwest` (off `exp/integration`). Save sound removed first
-(§7). The engine holds 16 location slots; `processFrame` runs active-slot update → other
-occupied slots free-run → presence-weighted blend. `./build.sh` green, 30/30 tests (5 new
-E–W cases). One realisation note vs the plan: injection is **nearest-slot** (round to the
-grid), not split across two — this keeps the crossfade constant-level (splitting halved it)
-and makes "active slot" a single unambiguous index. Current behaviour is documented in
-[dsp-design.md](dsp-design.md) / [parameters.md](parameters.md) / [gotchas.md](gotchas.md).
+**Status: v1 (16 slots) implemented, then SUPERSEDED by v2 — see "PLAN v2" at the end of
+this file.** Listening showed the v1 slot model produces abrupt volume jumps while sweeping:
+the *normalised* inverse-distance weights flip a slot's gain from ~0 to ~1 within a small
+knob movement whenever the knob crosses an occupied slot, and injection quantised to slot
+boundaries steps audibly. v2 replaces slots with **continuous per-tone locations and
+absolute (unnormalised) distance attenuation**. The v1 sections below are kept as rationale
+history only; the maths in §2 is no longer what runs.
 
 Scope is **only** the E–W knob. The other items on the user's fix list (output limiter
 module, reverb "metal" knob, shape-name display, knob renames, *Save sound* removal,
@@ -207,3 +207,94 @@ restructure has the same "compiles and mostly passes while subtly wrong" risk pr
 the integration merge (e.g. tracking or permanent edits leaking to the wrong slot, or a
 blend discontinuity that only shows as a click). Steps 3–4 are fine on **Sonnet 5**.
 Single-model run: **Opus 4.8**.
+
+---
+
+# PLAN v2 — continuous tone locations ("crossing a room")
+
+**Status: NOT implemented — this is the plan.** Same branch `exp/eastwest`, replacing the
+v1 slot engine. When done, flip this banner, rewrite the E–W wiki sections, `./build.sh`
+green with the reworked E–W tests (including a **smoothness** assertion).
+
+## V2.1 The model
+
+No slots, no blend of spectra. The engine already treats every bin as a free-running tone
+(phasor `S[k]` + tracked frequency `omega[k]`). Each bin additionally gets a **continuous
+location** `loc[k] ∈ [0,1]`. The held content is therefore a set of tones scattered along
+the E–W line at arbitrary positions — the knob is a listener walking past them.
+
+**Playback** at knob position `L`: every bin is output through an *absolute* attenuation
+
+```
+att(d) = exp( −(d/kLocSigma)² ),   d = |L − loc[k]|,   kLocSigma ≈ 0.35
+out[k] = S[k] · att(d) · gOut[k]
+```
+
+- No normalisation across tones → gains are smooth functions of the knob; **nothing can
+  jump** (that was v1's sin: a slot's *share* of a normalised sum flips fast near d→0).
+- "Influence based on volume" falls out for free: attenuation *multiplies* amplitude, so a
+  loud tone stays above audibility much further from its location than a quiet one — louder
+  sources carry across the room, quiet ones are local. No volume-dependent kernel needed.
+- A lone tone at East, knob at West: it is heard attenuated by distance (room semantics —
+  this deliberately replaces v1's "no fade if nothing else recorded" tent rule).
+
+**Recording**: injection is continuous. When input energy is fed into bin `k`, the bin's
+location is pulled toward the knob, weighted by how much new energy arrives vs what is held:
+
+```
+aHeld = |S[k]| (after decay, before injection),  aInj = |feed · x · comp|
+loc[k] ← (aHeld·loc[k] + aInj·L) / (aHeld + aInj)        (skip when aInj ≈ 0)
+```
+
+Sweeping the knob while feeding smears deposits continuously along the line — no slot
+quantisation. Re-recording a frequency that already exists elsewhere *drags that tone's
+location* toward the new spot (weighted merge). That is the one structural compromise of
+per-bin locations: two same-frequency tones cannot coexist at two locations. Accepted —
+documented in gotchas.
+
+**Edits take the dimension into account** ("affect more the nearest, less the furthest"):
+- Permanent shaper: `S[k] *= exp(Lcurve · mode · kPermScale · att(d_k))`.
+- Brush: gain exponent scaled by `att(d_k)` (drainBrush needs the knob value → pass Params).
+- Harmonize: each peak's frequency drift `df` scaled by `att(d_peakbin)`; the unison merge
+  and energy migration must **carry `loc` with the packet** exactly like `S`/`omega`/
+  `prevPhase` (any code that moves energy between bins moves `loc` too).
+- Momentary shaper: unchanged — it shapes the audible output, which is already
+  location-gained.
+- Frequency tracking: unchanged (input retunes the bin it feeds; the loc pull is already
+  merging semantics).
+
+**Backward compatibility** (user-specified): `ewLocation` default becomes **0.0**, and
+`reset()` fills `loc[] = 0`. Knob parked at 0 → every `d = 0`, `att = 1`, loc stays 0 →
+bit-identical to the pre-E–W engine, and **all params affect the sound exactly as before**.
+
+## V2.2 What gets deleted
+
+The entire v1 slot apparatus: `kNumSlots` stores, `useSlot`, `slotEnergy`/`slotOcc`,
+presence smoothstep, the Aₛ blend phase, `gOutScratch` (single loop again). Engine returns
+to one `S`/`omega`/`prevPhase` + the new `loc` vector. Memory drops ~16×; `processFrame`
+is again one per-bin loop (compute `att` once per bin, reuse for output gain and edit
+weight).
+
+## V2.3 Tests (replace the v1 E–W cases)
+
+1. **Legacy at zero**: knob 0 everywhere → sine feed/hold matches the original engine test.
+2. **Room walk is smooth** (the bug that motivated v2): deposit a tone at L=0; measure its
+   output magnitude at ≥ 32 knob positions 0→1. Assert monotone decreasing AND max
+   adjacent-step ≤ ~15% of the peak value (v1's normalised weights fail this massively).
+3. **Two tones, smooth pan**: A at 0, B at 1. A dominates at 0, B at 1, both audible in the
+   middle; per-bin gain sequences across the sweep have bounded steps.
+4. **Re-record drags location**: tone deposited at 0, then the same frequency fed at 1 →
+   its audibility at L=1 grows, at L=0 shrinks.
+5. **Edits are distance-weighted**: permanent cut applied with knob at 0 strongly reshapes
+   the tone at 0, barely touches the tone at 1.
+6. **Everything-on sweep stability** (in==out, house rule).
+
+## V2.4 Order
+
+1. Engine rewrite (V2.1/V2.2) + param default 0.0. All pre-E–W tests must pass with knob
+   parked at 0. Commit.
+2. Distance-weighted edits + loc-carrying merge/migration. Tests 4–5. Commit.
+3. Rework E–W tests (1–3, 6) + wiki rewrite + banner flip. Commit.
+
+Model note: engine rewrite done on Fable 5 (the per-bin loop + harmonize loc-carrying are
+the risky parts); no model switch needed for the remainder.
