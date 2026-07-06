@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "SpectralEngine.h"
+#include "PlateReverb.h"
 
 class SpectralHoldProcessor : public juce::AudioProcessor
 {
@@ -20,7 +21,10 @@ public:
     bool acceptsMidi() const override  { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    double getTailLengthSeconds() const override
+    {
+        return (pRevMix != nullptr && pRevMix->load() > 0.0f) ? 10.0 : 0.0;
+    }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -70,6 +74,16 @@ private:
     std::atomic<float>* pLoss   = nullptr;
     std::atomic<float>* pOutput = nullptr;
     std::atomic<float>* pPhaseNoise = nullptr;
+
+    // output reverb (post-fader, pre-limiter; see agent-wiki/plan-reverb.md)
+    std::atomic<float>* pRevMix      = nullptr;
+    std::atomic<float>* pRevDecay    = nullptr;
+    std::atomic<float>* pRevSize     = nullptr;
+    std::atomic<float>* pRevDamp     = nullptr;
+    std::atomic<float>* pRevPredelay = nullptr;
+    PlateReverb reverb;
+    std::vector<float> revMono, revWetL, revWetR;
+    float prevRevMix = 0.0f; // to detect the 1->0 transition and reset the tail
 
     // spectral shaper (replaces the old filter + compress)
     std::atomic<float>* pShapeAmt   = nullptr;

@@ -25,6 +25,12 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pShapeWidth = apvts.getRawParameterValue ("shapeWidth");
     pShapeCount = apvts.getRawParameterValue ("shapeCount");
     pShapeLevel = apvts.getRawParameterValue ("shapeLevel");
+
+    pRevMix      = apvts.getRawParameterValue ("revMix");
+    pRevDecay    = apvts.getRawParameterValue ("revDecay");
+    pRevSize     = apvts.getRawParameterValue ("revSize");
+    pRevDamp     = apvts.getRawParameterValue ("revDamp");
+    pRevPredelay = apvts.getRawParameterValue ("revPredelay");
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::createLayout()
@@ -76,10 +82,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "shapeLevel", 1 }, "Shape Level",
         NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
 
+    // Output reverb (post-fader, pre-limiter; see agent-wiki/plan-reverb.md)
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "revMix", 1 }, "Reverb Mix",
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // 0 = bit-exact dry
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "revDecay", 1 }, "Reverb Decay",
+        NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "revSize", 1 }, "Reverb Size",
+        NormalisableRange<float> (0.5f, 2.0f), 1.0f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "revDamp", 1 }, "Reverb Damp",
+        NormalisableRange<float> (0.0f, 1.0f), 0.3f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "revPredelay", 1 }, "Reverb Predelay",
+        NormalisableRange<float> (0.0f, 250.0f, 0.0f, 0.35f), 20.0f)); // ms, log-ish skew
+
     return layout;
 }
 
-void SpectralHoldProcessor::prepareToPlay (double sampleRate, int)
+void SpectralHoldProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     for (auto& e : engines)
     {
@@ -94,6 +121,12 @@ void SpectralHoldProcessor::prepareToPlay (double sampleRate, int)
     limEnv = 0.0f;
     limGain = 1.0f;
     prepared = true;
+
+    reverb.prepare (sampleRate);
+    revMono.assign ((size_t) samplesPerBlock, 0.0f);
+    revWetL.assign ((size_t) samplesPerBlock, 0.0f);
+    revWetR.assign ((size_t) samplesPerBlock, 0.0f);
+    prevRevMix = pRevMix->load();
 
     // apply any held audio state that was restored from a preset before we were prepared
     if (pendingAudioState.getSize() > 0)
@@ -171,6 +204,48 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const float outGain = pOutput->load();
     if (outGain != 1.0f)
         buffer.applyGain (outGain);
+
+    // --- output reverb (post-fader, pre-limiter). Hard-bypassed at mix=0 so old
+    // sessions (and mix left at its default) stay bit-exact dry; the tail is reset
+    // on the 1->0 transition so no stale tail plays when mix comes back up.
+    const float revMix = pRevMix->load();
+    if (revMix <= 0.0f)
+    {
+        if (prevRevMix > 0.0f)
+            reverb.reset();
+    }
+    else
+    {
+        if ((int) revMono.size() < numSamples)
+        {
+            revMono.resize ((size_t) numSamples);
+            revWetL.resize ((size_t) numSamples);
+            revWetR.resize ((size_t) numSamples);
+        }
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            float sum = 0.0f;
+            for (int ch = 0; ch < numCh; ++ch)
+                sum += buffer.getReadPointer (ch)[n];
+            revMono[(size_t) n] = numCh > 0 ? sum / (float) numCh : 0.0f;
+        }
+
+        reverb.setParams (pRevDecay->load(), pRevSize->load(), pRevDamp->load(),
+                           pRevPredelay->load() * 0.001f);
+        reverb.process (revMono.data(), revWetL.data(), revWetR.data(), numSamples);
+
+        const float dryGain = std::cos (revMix * juce::MathConstants<float>::halfPi);
+        const float wetGain = std::sin (revMix * juce::MathConstants<float>::halfPi);
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            auto* d = buffer.getWritePointer (ch);
+            const float* wet = (ch % 2 == 0) ? revWetL.data() : revWetR.data();
+            for (int n = 0; n < numSamples; ++n)
+                d[n] = d[n] * dryGain + wet[n] * wetGain;
+        }
+    }
+    prevRevMix = revMix;
 
     // --- slow linked limiter: lower gain only when peak would exceed +/-1
     for (int n = 0; n < numSamples; ++n)
