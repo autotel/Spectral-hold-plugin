@@ -149,31 +149,33 @@ Linked across channels so the stereo image is preserved.
 - `limGain` eases toward `target` (fast when reducing, slow when recovering) and multiplies
   every channel. Result: transparent under -1..1, gentle slow pull-down above it.
 
-## East–West location field (2-D held state)
-The held sound is not one spectrum but **`kNumSlots = 16` location slots**, each a full
-spectral state (`S`/`omega`/`prevPhase`, held in flat per-slot stores; `useSlot(s)` points
-the working pointers at slot `s`). The `ewLocation` knob (0 = East, 1 = West) drives both
-recording and playback. `processFrame` runs in three phases:
+## East–West location field (continuous tone locations, plan v2)
+Every bin/tone carries a **continuous location** `binLoc[k] ∈ [0,1]` alongside `S`/`omega`/
+`prevPhase`. The `ewLocation` knob (0 = East = legacy default, 1 = West) is a **listener/
+recorder walking the line**:
 
-1. **Active slot** = nearest grid slot to the knob (`round(ewLocation·15)`). Only this slot
-   receives injected input, frequency tracking, and all **permanent** edits (permanent
-   shaper, harmonize, brush) — "edit where you point." Its momentary-shaper gain is stored
-   per bin for phase 3.
-2. **Every other occupied slot** free-runs (phasor advance + loss decay only, no input), so
-   deposited tones stay continuous while inaudible.
-3. **Blend**: each occupied slot gets a location gain
-   `Aₛ = pₛ·φ(L−Lₛ) / Σ`, where `φ(d) = 1/(dᵏ + ε)` (`kLocP=2`) is inverse-distance and
-   `pₛ = smoothstep(kPresLo·max, kPresHi·max, levelₛ)` is a **presence** that fades a slot
-   out as its level drops. The output spectrum is `Σₛ Aₛ·Sₛ`, then the momentary shaper gain
-   is applied, then one IFFT. Presence-weighting is what makes an emptying slot smoothly
-   stop anchoring so its neighbours bridge the gap (no silent hole, no pop); a lone slot has
-   `A=1` everywhere (holds full — "only East → no fade moving West").
+- **Playback**: each bin is output through `att(d) = exp(−(d/kLocSigma)²)`,
+  `d = |ewLocation − binLoc[k]|`. The attenuation is **absolute — never normalised across
+  tones** — so gains are smooth in both knob position and time; nothing can jump (v1's slot
+  blend normalised weights and did jump; see plan-eastwest.md). Louder tones stay audible
+  further away simply because attenuation multiplies amplitude.
+- **Recording**: injection pulls the fed bin's location toward the knob, weighted by new
+  vs held energy: `loc ← (aHeld·loc + aInj·L)/(aHeld+aInj)` (skipped for near-zero
+  injections, `kInjLocFloor`, so silence never drags tones). Continuous — no quantisation.
+- **Edits take the dimension into account**: permanent shaper and brush exponents and each
+  harmonize peak's drift are scaled by the same `att(d)` — nearest tones are edited at full
+  strength, far ones barely. The **momentary** shaper stays full-strength on the output
+  (which is already location-gained).
+- **`binLoc` travels with energy**: harmonize's unison merge (amplitude-weighted, like
+  omega) and rigid packet migration both carry it. Any future code that moves energy
+  between bins must move `binLoc` too.
+- **Backward compatible at 0**: `reset()` fills `binLoc = 0` and the param defaults to 0,
+  so parked at East every `att = 1` and the engine is exactly the pre-E–W single buffer —
+  all params affect the sound as before.
 
-Injection is **nearest-slot** (not split across two), which keeps the crossfade
-constant-level. `levelₛ = √Σ|Sₛ|²` is accumulated during each slot's update; a non-active
-slot whose energy falls below `kSlotFloor` is dropped (and zeroed). Cost: one IFFT per hop;
-the per-bin update and blend scale with the number of *occupied* slots (≤16). Full design
-rationale in [plan-eastwest.md](plan-eastwest.md).
+One structural compromise: locations are per **bin**, so two same-frequency tones cannot
+coexist at two locations — re-recording a pitch elsewhere *drags* it (weighted merge).
+Documented in gotchas. Cost: one `exp` per bin per hop.
 
 ## Reconfiguring FFT size at runtime
 `setOrder()` is called from the message thread; it only stores `pendingOrder`. The audio
@@ -185,6 +187,6 @@ change (a clean re-freeze), and latency is re-reported.
 ## Constants worth knowing (top of SpectralEngine.cpp)
 `kOverlap=4`, `kCompFloor=0.05`, `kDecayFloor=1e-4`, `kPermScale=0.23` (coupled with the
 `4.6` normaliser in `ShapeCurves.h` — see the shaper section above), `kLn4=ln(4)` (momentary
-boost ceiling, +12 dB). East–West: `kNumSlots=16`, `kLocP=2` (blend locality), `kLocEps`,
-`kPresLo=0.02`/`kPresHi=0.15` (presence smoothstep floors, fractions of the loudest slot),
-`kSlotFloor` (drop-empty threshold). Limiter constants are at the top of `PluginProcessor.cpp`.
+boost ceiling, +12 dB). East–West: `kLocSigma=0.35` (room size — gaussian attenuation width;
+d=0.5 → ~−18 dB, d=1 → ~−71 dB), `kInjLocFloor` (ignore near-zero injections when pulling
+`binLoc`). Limiter constants are at the top of `PluginProcessor.cpp`.

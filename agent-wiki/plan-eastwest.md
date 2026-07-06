@@ -212,9 +212,13 @@ Single-model run: **Opus 4.8**.
 
 # PLAN v2 — continuous tone locations ("crossing a room")
 
-**Status: NOT implemented — this is the plan.** Same branch `exp/eastwest`, replacing the
-v1 slot engine. When done, flip this banner, rewrite the E–W wiki sections, `./build.sh`
-green with the reworked E–W tests (including a **smoothness** assertion).
+**Status: implemented** on `exp/eastwest`, replacing the v1 slot engine (slots, `useSlot`,
+presence blend all deleted; `binLoc[k]` + `ewAtt` in their place). `./build.sh` green,
+30/30 tests — the reworked E–W cases include the smoothness assertion the v1 model was
+failing in listening (max adjacent gain step across a 32-position sweep measured **8% of
+peak** vs v1's near-total single-step flips). `ewLocation` default moved to **0.0** per the
+backward-compat spec. Current behaviour documented in [dsp-design.md](dsp-design.md) /
+[gotchas.md](gotchas.md) / [parameters.md](parameters.md).
 
 ## V2.1 The model
 

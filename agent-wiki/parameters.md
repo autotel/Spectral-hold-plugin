@@ -19,7 +19,7 @@ is over (Ableton-style).
 |---------------------|----------------|---------|-------------------|
 | Feed `feed`         | 0 .. 1         | 0.5     | Linear gain on input injected into the running FT each hop. |
 | Loss `loss`         | 0 .. 1         | 0.2     | Decay of held magnitudes. `decay = exp(-loss·hop/sr·6)`. 0 = eternal hold. |
-| E↔W `ewLocation`    | 0 .. 1         | 0.5     | Position in the East(0)–West(1) location field. The held sound spans 16 location slots; the knob picks where input is deposited (nearest slot) and where the output blend peaks. See [dsp-design.md](dsp-design.md) / the E–W notes in gotchas.md. |
+| E↔W `ewLocation`    | 0 .. 1         | 0.0     | Listener/recorder position on the continuous East–West line. Held tones carry their own location; they are heard through an absolute gaussian distance attenuation, input is deposited at the knob (pulling the fed tone's location), and edits reach nearest tones hardest. Parked at 0 (default) = exact legacy behaviour. See [dsp-design.md](dsp-design.md). |
 | Dry/Wet `dryWet`    | 0 .. 1         | 1.0     | Global mix: engine output (1) vs untouched input (0). The dry path is delayed by `fftSize` (`DryDelay.h`) so it stays time-aligned with the wet. 1 = bit-exact wet-only (skip). |
 | Output `output`     | 0 .. 2         | 1.0     | Final output level (linear gain), applied **before** the limiter so it still protects ±1. |
 | Phase Noise `phaseNoise` | bool      | off     | When on, injects ±`kPhaseNoise` rad of per-frame random jitter into each bin's phase advance (shimmer/roughness). Non-accumulating — does not permanently detune. |
