@@ -1,7 +1,8 @@
-// Offline DSP smoke-test for SpectralEngine. No host, no GUI.
+// Offline DSP smoke-test for SpectralEngine and PlateReverb. No host, no GUI.
 // Checks: stability (no NaN/Inf), silence -> silence, a fed sine produces
 // bounded, non-trivial output, and that the held tone sustains after input stops.
 #include "SpectralEngine.h"
+#include "PlateReverb.h"
 #include <cstdio>
 #include <cmath>
 
@@ -383,6 +384,136 @@ int main()
         for (int blk = 0; blk < 20; ++blk) { std::fill (b.begin(), b.end(), 0.0f); dst.process (b.data(), b.data(), block, f); r = juce::jmax (r, rms (b.data(), block)); }
         bool ok = std::isfinite (r) && r > 1.0e-3f; // restored engine sustains the held tone
         printf ("[%s] audio-state save/restore: tailRMS=%.4f\n", ok ? "PASS" : "FAIL", r);
+        fails += ok ? 0 : 1;
+    }
+
+    // ---- PlateReverb (agent-wiki/plan-reverb.md §6) ----
+
+    auto rmsRange = [] (const std::vector<float>& x, int from, int to)
+    {
+        return rms (x.data() + from, to - from);
+    };
+
+    // 2) tail exists & decays: impulse -> wet output; RMS around 1.0-1.5s nonzero,
+    // RMS around 4.0-4.5s smaller (decay=0.5, size=1)
+    {
+        PlateReverb rv; rv.prepare (sr);
+        rv.setParams (0.5f, 1.0f, 0.3f, 0.02f);
+        const int n = (int) (5.0 * sr);
+        std::vector<float> in (n, 0.0f), wl (n), wr (n);
+        in[0] = 1.0f;
+        rv.process (in.data(), wl.data(), wr.data(), n);
+        bool finite = finiteAll (wl.data(), n) && finiteAll (wr.data(), n);
+        float early = rmsRange (wl, (int) (1.0 * sr), (int) (1.5 * sr));
+        float late  = rmsRange (wl, (int) (4.0 * sr), (int) (4.5 * sr));
+        bool ok = finite && early > 1.0e-5f && late < early;
+        printf ("[%s] reverb tail decays: early=%.2e late=%.2e\n", ok ? "PASS" : "FAIL", early, late);
+        fails += ok ? 0 : 1;
+    }
+
+    // 3) decay knob is monotonic: RMS at t=2s with decay=0.8 > decay=0.3
+    {
+        auto rmsAt2s = [&] (float decay)
+        {
+            PlateReverb rv; rv.prepare (sr);
+            rv.setParams (decay, 1.0f, 0.3f, 0.02f);
+            const int n = (int) (2.2 * sr);
+            std::vector<float> in (n, 0.0f), wl (n), wr (n);
+            in[0] = 1.0f;
+            rv.process (in.data(), wl.data(), wr.data(), n);
+            return rmsRange (wl, (int) (2.0 * sr), (int) (2.2 * sr));
+        };
+        float lo = rmsAt2s (0.3f), hi = rmsAt2s (0.8f);
+        bool ok = std::isfinite (lo) && std::isfinite (hi) && hi > lo;
+        printf ("[%s] reverb decay monotonic: decay0.3=%.2e decay0.8=%.2e\n",
+                ok ? "PASS" : "FAIL", lo, hi);
+        fails += ok ? 0 : 1;
+    }
+
+    // 4) stability at extremes: decay=1.0 (clamped 0.98), size=2.0 -- 2s noise then
+    // 30s silence, every sample finite and bounded
+    {
+        PlateReverb rv; rv.prepare (sr);
+        rv.setParams (1.0f, 2.0f, 0.3f, 0.02f);
+        juce::Random rng (1234);
+        const int nNoise = (int) (2.0 * sr);
+        std::vector<float> in (nNoise), wl (nNoise), wr (nNoise);
+        for (int i = 0; i < nNoise; ++i) in[i] = rng.nextFloat() * 2.0f - 1.0f;
+        rv.process (in.data(), wl.data(), wr.data(), nNoise);
+
+        const int nSil = (int) (30.0 * sr);
+        std::vector<float> sil (nSil, 0.0f), sl (nSil), sr2 (nSil);
+        rv.process (sil.data(), sl.data(), sr2.data(), nSil);
+
+        bool finite = finiteAll (wl.data(), nNoise) && finiteAll (wr.data(), nNoise)
+                      && finiteAll (sl.data(), nSil) && finiteAll (sr2.data(), nSil);
+        float maxAbs = 0.0f;
+        for (float v : wl) maxAbs = juce::jmax (maxAbs, std::abs (v));
+        for (float v : sl)  maxAbs = juce::jmax (maxAbs, std::abs (v));
+        bool ok = finite && maxAbs < 10.0f;
+        printf ("[%s] reverb stability at extremes: finite=%d maxAbs=%.3f\n",
+                ok ? "PASS" : "FAIL", (int) finite, maxAbs);
+        fails += ok ? 0 : 1;
+    }
+
+    // 5) stereo decorrelation: impulse tail, normalized cross-correlation of L vs R
+    // over the first 2s < 0.9
+    {
+        PlateReverb rv; rv.prepare (sr);
+        rv.setParams (0.6f, 1.0f, 0.3f, 0.02f);
+        const int n = (int) (2.0 * sr);
+        std::vector<float> in (n, 0.0f), wl (n), wr (n);
+        in[0] = 1.0f;
+        rv.process (in.data(), wl.data(), wr.data(), n);
+        double dot = 0.0, el = 0.0, er = 0.0;
+        for (int i = 0; i < n; ++i) { dot += (double) wl[i] * wr[i]; el += (double) wl[i] * wl[i]; er += (double) wr[i] * wr[i]; }
+        float corr = (float) (dot / std::sqrt (juce::jmax (1.0e-20, el * er)));
+        bool ok = std::isfinite (corr) && corr < 0.9f;
+        printf ("[%s] reverb stereo decorrelation: corr=%.3f\n", ok ? "PASS" : "FAIL", corr);
+        fails += ok ? 0 : 1;
+    }
+
+    // 6) damping darkens: HF proxy (energy of first-difference) at damp=0.9 must be
+    // less than at damp=0.1
+    {
+        auto hfEnergy = [&] (float damp)
+        {
+            PlateReverb rv; rv.prepare (sr);
+            rv.setParams (0.6f, 1.0f, damp, 0.02f);
+            const int n = (int) (1.0 * sr);
+            std::vector<float> in (n, 0.0f), wl (n), wr (n);
+            in[0] = 1.0f;
+            rv.process (in.data(), wl.data(), wr.data(), n);
+            double e = 0.0;
+            for (int i = 1; i < n; ++i) { float d = wl[i] - wl[i - 1]; e += (double) d * d; }
+            return e;
+        };
+        double bright = hfEnergy (0.1f), dark = hfEnergy (0.9f);
+        bool ok = std::isfinite (bright) && std::isfinite (dark) && dark < bright;
+        printf ("[%s] reverb damping darkens: bright=%.3e dark=%.3e\n", ok ? "PASS" : "FAIL", bright, dark);
+        fails += ok ? 0 : 1;
+    }
+
+    // 7) size change doesn't explode: sweep size 0.5 -> 2.0 over 1s while feeding noise
+    {
+        PlateReverb rv; rv.prepare (sr);
+        juce::Random rng (5678);
+        const int n = (int) (1.0 * sr);
+        std::vector<float> wl (n), wr (n);
+        bool finite = true;
+        float maxAbs = 0.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            float size = juce::jmap ((float) i / (float) n, 0.5f, 2.0f);
+            rv.setParams (0.6f, size, 0.3f, 0.02f);
+            float x = rng.nextFloat() * 2.0f - 1.0f;
+            rv.process (&x, &wl[(size_t) i], &wr[(size_t) i], 1);
+            if (! std::isfinite (wl[(size_t) i]) || ! std::isfinite (wr[(size_t) i])) finite = false;
+            maxAbs = juce::jmax (maxAbs, std::abs (wl[(size_t) i]));
+        }
+        bool ok = finite && maxAbs < 10.0f;
+        printf ("[%s] reverb size sweep stable: finite=%d maxAbs=%.3f\n",
+                ok ? "PASS" : "FAIL", (int) finite, maxAbs);
         fails += ok ? 0 : 1;
     }
 

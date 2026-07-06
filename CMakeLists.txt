@@ -25,6 +25,7 @@ target_sources(SpectralHold PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/SpectralEngine.cpp
+    Source/PlateReverb.cpp
     Source/SpectrumDisplay.cpp
     Source/SpectralLookAndFeel.cpp)
 
@@ -43,7 +44,7 @@ target_link_libraries(SpectralHold PRIVATE
 
 # ---- offline DSP smoke-test (no host, no GUI) ----
 juce_add_console_app(SpectralHoldTest PRODUCT_NAME "SpectralHoldTest")
-target_sources(SpectralHoldTest PRIVATE Source/test_main.cpp Source/SpectralEngine.cpp)
+target_sources(SpectralHoldTest PRIVATE Source/test_main.cpp Source/SpectralEngine.cpp Source/PlateReverb.cpp)
 target_compile_definitions(SpectralHoldTest PRIVATE
     JUCE_STANDALONE_APPLICATION=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 target_link_libraries(SpectralHoldTest PRIVATE
