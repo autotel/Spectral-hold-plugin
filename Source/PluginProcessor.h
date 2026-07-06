@@ -52,6 +52,10 @@ public:
     void setSaveWithSound (bool b) { saveWithSound = b; }
     bool getSaveWithSound() const  { return saveWithSound; }
 
+    // Active editor tab (0 shaper, 1 harmonize, 2 reverb). GUI-only, persisted in state.
+    void setUiTab (int t) { uiTab = t; }
+    int  getUiTab() const { return uiTab; }
+
     // Snapshot for the spectrum display (channel 0). Returns numBins or 0.
     int getDisplaySnapshot (std::vector<float>& mag, std::vector<float>& phase,
                             double& sr, int& size);
@@ -119,6 +123,7 @@ private:
     // GUI-only switches (persisted manually, see get/setStateInformation)
     bool liveMode = false;
     bool saveWithSound = false;
+    int  uiTab = 0;
     juce::CriticalSection audioStateLock; // guards engine state vs. preset restore
 
     // Held audio state restored from a preset but waiting for prepareToPlay (the host may call

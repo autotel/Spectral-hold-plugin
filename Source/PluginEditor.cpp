@@ -89,8 +89,44 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     saveSoundButton.onClick = [this] { proc.setSaveWithSound (saveSoundButton.getToggleState()); };
     addAndMakeVisible (saveSoundButton);
 
-    setActiveTab (0);
-    setSize (860, 560);
+    // info bar (Ableton-style): hover any control for a one-line explanation
+    infoListener.bar = &infoBar;
+    infoBar.setJustificationType (juce::Justification::centredLeft);
+    infoBar.setColour (juce::Label::textColourId, juce::Colour (0xffa0a0aa));
+    infoBar.setFont (juce::Font (juce::FontOptions (13.0f)));
+    addAndMakeVisible (infoBar);
+
+    setInfo (feed.slider,       "How much live input is injected into the held spectrum each hop.");
+    setInfo (loss.slider,       "How fast held tones decay. 0 = hold forever.");
+    setInfo (dryWet.slider,     "Balance of untouched input vs the spectral hold output.");
+    setInfo (output.slider,     "Output level, before the safety limiter.");
+    setInfo (shapeAmt.slider,   "Shaper depth: scales the whole curve.");
+    setInfo (shapeMode.slider,  "Shaper: momentary (out-only, reversible) vs permanent (etched into the held sound).");
+    setInfo (shape.slider,      "Morphs the curve: Level, Sigmoid, Spikes, Harmonics, Sine.");
+    setInfo (shapeFreq.slider,  "Shaper curve centre frequency.");
+    setInfo (shapeWidth.slider, "Shaper curve width / steepness / spacing (per shape).");
+    setInfo (shapeCount.slider, "Shaper extent / repetitions across the spectrum (per shape).");
+    setInfo (shapeLevel.slider, "Shaper strength, signed. 0 = off; negative inverts (cut/pass per shape).");
+    setInfo (harmonize.slider,  "Held tones pull each other's pitch until they drift together. Permanent while Feed is low; live input re-tunes it back.");
+    setInfo (harmWidth.slider,  "How far apart (in octaves) tones still influence each other.");
+    setInfo (harmonic.slider,   "Blend: 0 = tones average together, 1 = tones snap to simple harmonic ratios.");
+    setInfo (revMix.slider,     "Reverb wet/dry on the output. 0 = reverb fully off.");
+    setInfo (revDecay.slider,   "Reverb tail length.");
+    setInfo (revSize.slider,    "Reverb room size. Moving it live bends the tail's pitch.");
+    setInfo (revDamp.slider,    "Darkens the reverb tail.");
+    setInfo (revPredelay.slider,"Gap before the reverb starts.");
+    setInfo (revFeed.slider,    "Feeds the reverb tail back into the hold - the space becomes part of the held sound.");
+    setInfo (noiseButton,       "Adds shimmer by jittering each tone's phase. Never detunes permanently.");
+    setInfo (sizeBox,           "Spectral resolution vs time response. Changing it resets the held sound.");
+    setInfo (liveButton,        "Report zero latency to the host (for live playing; disables delay compensation).");
+    setInfo (saveSoundButton,   "Include the currently held sound in the saved preset.");
+    setInfo (brushSizeSlider,   "Drag on the display to boost/cut held tones. This sets the brush width.");
+    setInfo (shaperTab,         "Per-bin amplitude curves: filter, compress, combs and more.");
+    setInfo (harmonizeTab,      "Coupled-oscillator pitch interaction between held tones.");
+    setInfo (reverbTab,         "Plate reverb on the output, optionally fed back into the hold.");
+
+    setActiveTab (proc.getUiTab()); // restore the last shown tab (persisted in state)
+    setSize (860, 580);
 }
 
 SpectralHoldEditor::~SpectralHoldEditor()
@@ -115,9 +151,17 @@ void SpectralHoldEditor::setupKnob (Knob& k, const juce::String& paramId, const 
     k.attach = std::make_unique<SliderAttach> (proc.apvts, paramId, k.slider);
 }
 
+void SpectralHoldEditor::setInfo (juce::Component& c, const juce::String& description)
+{
+    infoListener.texts[&c] = description;
+    c.addMouseListener (&infoListener, false);
+}
+
 void SpectralHoldEditor::setActiveTab (int tabIndex)
 {
     activeTab = tabIndex;
+    proc.setUiTab (tabIndex);              // persisted with the plugin state
+    display.setOverlayMode (tabIndex);     // shaper curve / harmonize influence / none
 
     Knob* shaperKnobs[]    = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
     Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
@@ -151,7 +195,8 @@ void SpectralHoldEditor::resized()
 
     display.setBounds (r.removeFromTop (250).reduced (8));
 
-    // reserve the bottom row first so knobs never overlap it
+    // reserve the bottom rows first so knobs never overlap them
+    infoBar.setBounds (r.removeFromBottom (20).reduced (10, 0));
     auto bottom = r.removeFromBottom (30).reduced (8, 5);
 
     auto layoutRow = [] (juce::Rectangle<int> area, Knob* const* knobs, int count)

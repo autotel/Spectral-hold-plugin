@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <map>
 #include "PluginProcessor.h"
 #include "SpectrumDisplay.h"
 #include "SpectralLookAndFeel.h"
@@ -25,6 +26,7 @@ private:
 
     void setupKnob (Knob&, const juce::String& paramId, const juce::String& text);
     void setActiveTab (int tabIndex); // 0 = Shaper, 1 = Harmonize, 2 = Reverb
+    void setInfo (juce::Component&, const juce::String& description);
 
     SpectralHoldProcessor& proc;
 
@@ -55,6 +57,26 @@ private:
 
     juce::Label  brushLabel;
     juce::Slider brushSizeSlider; // GUI-only brush size, not a DAW parameter
+
+    // Ableton-style info bar: hovering any control shows its one-line description here.
+    struct InfoListener : juce::MouseListener
+    {
+        std::map<juce::Component*, juce::String> texts;
+        juce::Label* bar = nullptr;
+        void mouseEnter (const juce::MouseEvent& e) override
+        {
+            auto it = texts.find (e.eventComponent);
+            if (bar != nullptr && it != texts.end())
+                bar->setText (it->second, juce::dontSendNotification);
+        }
+        void mouseExit (const juce::MouseEvent&) override
+        {
+            if (bar != nullptr)
+                bar->setText ({}, juce::dontSendNotification);
+        }
+    };
+    InfoListener infoListener;
+    juce::Label  infoBar;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectralHoldEditor)
 };

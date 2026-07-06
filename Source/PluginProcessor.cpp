@@ -353,6 +353,7 @@ void SpectralHoldProcessor::getStateInformation (juce::MemoryBlock& dest)
     state.setProperty ("fftOrder", fftOrder.load(), nullptr);
     state.setProperty ("liveMode", liveMode, nullptr);
     state.setProperty ("saveWithSound", saveWithSound, nullptr);
+    state.setProperty ("uiTab", uiTab, nullptr);
 
     if (saveWithSound)
     {
@@ -382,6 +383,7 @@ void SpectralHoldProcessor::setStateInformation (const void* data, int size)
 
     setLiveMode    ((bool) tree.getProperty ("liveMode", false));
     saveWithSound = (bool) tree.getProperty ("saveWithSound", false);
+    uiTab         = juce::jlimit (0, 2, (int) tree.getProperty ("uiTab", 0));
 
     const int ord = (int) tree.getProperty ("fftOrder", fftOrder.load());
     setFftOrder (ord);
