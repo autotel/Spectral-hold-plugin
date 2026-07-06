@@ -60,7 +60,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "ewLocation", 1 }, "E<->W",
-        NormalisableRange<float> (0.0f, 1.0f), 0.5f)); // East(0)..West(1) location field
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // listener/recorder position, East(0,
+                                                        // default = legacy) .. West(1)
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "dryWet", 1 }, "Dry/Wet",

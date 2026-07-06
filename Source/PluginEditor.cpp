@@ -96,7 +96,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
 
     setInfo (feed.slider,       "How much live input is injected into the held spectrum each hop.");
     setInfo (loss.slider,       "How fast held tones decay. 0 = hold forever.");
-    setInfo (ewLocation.slider, "Position along the East-West field: records held tones here, and blends between deposited locations. Set Feed to 0 to audition without overwriting.");
+    setInfo (ewLocation.slider, "Walk the East-West line: tones are recorded at this position and heard louder the closer you are. Set Feed to 0 to walk without recording.");
     setInfo (dryWet.slider,     "Balance of untouched input vs the spectral hold output.");
     setInfo (output.slider,     "Output level, before the safety limiter.");
     setInfo (shapeAmt.slider,   "Shaper depth: scales the whole curve.");

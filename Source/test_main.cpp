@@ -754,66 +754,88 @@ int main()
         return m[(size_t) bin];
     };
 
-    // ew1) two deposits crossfade: A at East, B at West; sweeping the knob fades A out and B in
-    {
-        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
-        double pa = 0.0, pb = 0.0;
-        ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa); // A at East
-        ewDeposit (e, 1.0f, 4000.0f, 0.5f, pb); // B at West
-        const int bA = ewBin (1000.0f), bB = ewBin (4000.0f);
-        float a0 = ewMeasure (e, 0.0f, bA), a5 = ewMeasure (e, 0.5f, bA), a1 = ewMeasure (e, 1.0f, bA);
-        float b0 = ewMeasure (e, 0.0f, bB), b1 = ewMeasure (e, 1.0f, bB);
-        bool ok = std::isfinite (a0) && a0 > a5 && a5 > a1 && a1 < a0 * 0.2f   // A fades E->W
-                  && b1 > b0 && b0 < b1 * 0.2f;                                // B fades in W
-        printf ("[%s] ew crossfade: A(E=%.3f,M=%.3f,W=%.3f) B(E=%.3f,W=%.3f)\n",
-                ok ? "PASS" : "FAIL", a0, a5, a1, b0, b1);
-        fails += ok ? 0 : 1;
-    }
-
-    // ew2) hold-full beyond the extreme: with only East deposited, moving the knob West does
-    // NOT fade it (the sole occupied slot is always the nearest present one).
+    // ew1) room walk is smooth (the v1 bug): a tone at East, walked past 0->1 in 32 steps,
+    // fades monotonically with NO jumps (max adjacent step bounded). v1's normalised slot
+    // weights fail the step bound massively; v2's absolute attenuation is smooth by design.
     {
         SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
         double pa = 0.0;
         ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
         const int bA = ewBin (1000.0f);
-        float v0 = ewMeasure (e, 0.0f, bA), v3 = ewMeasure (e, 0.33f, bA);
-        float v6 = ewMeasure (e, 0.66f, bA), v1 = ewMeasure (e, 1.0f, bA);
-        float lo = juce::jmin (juce::jmin (v0, v3), juce::jmin (v6, v1));
-        float hi = juce::jmax (juce::jmax (v0, v3), juce::jmax (v6, v1));
-        bool ok = std::isfinite (hi) && lo > 1.0e-4f && hi < lo * 1.2f; // ~constant across the sweep
-        printf ("[%s] ew hold-full beyond extreme: min=%.3f max=%.3f\n", ok ? "PASS" : "FAIL", lo, hi);
-        fails += ok ? 0 : 1;
-    }
-
-    // ew3) presence-weighted bridge: a LOUD middle deposit blocks the E<->W bridge at 0.5
-    // (it dominates), but a NEGLIGIBLE middle deposit does not -- its presence is ~0 so the
-    // two outer slots still mix in. (Verifies the graded "silent slot extends neighbours".)
-    {
-        const int bA = ewBin (1000.0f), bB = ewBin (4000.0f);
-        auto build = [&] (float midAmp, float& aOut, float& bOut)
+        const int N = 33;
+        std::vector<float> v ((size_t) N);
+        float peak = 0.0f, maxStep = 0.0f, maxRise = 0.0f;
+        for (int i = 0; i < N; ++i)
         {
-            SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
-            double pa = 0.0, pb = 0.0, pm = 0.0;
-            ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
-            ewDeposit (e, 1.0f, 4000.0f, 0.5f, pb);
-            if (midAmp > 0.0f) ewDeposit (e, 0.5f, 2500.0f, midAmp, pm);
-            aOut = ewMeasure (e, 0.5f, bA);
-            bOut = ewMeasure (e, 0.5f, bB);
-        };
-        float aNo, bNo, aBig, bBig, aTiny, bTiny;
-        build (0.0f,   aNo,   bNo);   // no middle -> A+B bridge
-        build (0.5f,   aBig,  bBig);  // loud middle -> bridge suppressed
-        build (0.002f, aTiny, bTiny); // negligible middle -> bridge preserved
-        bool ok = aBig < aNo * 0.3f && bBig < bNo * 0.3f
-                  && aTiny > aNo * 0.9f && bTiny > bNo * 0.9f;
-        printf ("[%s] ew presence bridge: A(no=%.3f big=%.3f tiny=%.3f) B(no=%.3f big=%.3f tiny=%.3f)\n",
-                ok ? "PASS" : "FAIL", aNo, aBig, aTiny, bNo, bBig, bTiny);
+            v[(size_t) i] = ewMeasure (e, (float) i / (float) (N - 1), bA);
+            peak = juce::jmax (peak, v[(size_t) i]);
+        }
+        for (int i = 1; i < N; ++i)
+        {
+            maxStep = juce::jmax (maxStep, std::abs (v[(size_t) i] - v[(size_t) i - 1]));
+            maxRise = juce::jmax (maxRise, v[(size_t) i] - v[(size_t) i - 1]); // should only fall
+        }
+        bool ok = std::isfinite (peak) && peak > 1.0e-3f
+                  && v[0] > v[(size_t) (N - 1)] * 5.0f      // audibly fades with distance
+                  && maxStep < peak * 0.15f                 // no jumps
+                  && maxRise < peak * 0.02f;                // monotone (tiny tolerance)
+        printf ("[%s] ew room walk smooth: peak=%.3f far=%.4f maxStep=%.3f (%.0f%% of peak)\n",
+                ok ? "PASS" : "FAIL", peak, v[(size_t) (N - 1)], maxStep, 100.0f * maxStep / juce::jmax (1.0e-9f, peak));
         fails += ok ? 0 : 1;
     }
 
-    // ew4) a permanent edit hits only the active slot: cut at East (slot holding A) leaves the
-    // West slot (holding B) untouched.
+    // ew2) two tones, smooth pan: A at East, B at West. Each dominates at its own end, both
+    // audible in the middle, and BOTH gain curves are jump-free across the sweep.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        double pa = 0.0, pb = 0.0;
+        ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
+        ewDeposit (e, 1.0f, 4000.0f, 0.5f, pb);
+        const int bA = ewBin (1000.0f), bB = ewBin (4000.0f);
+        const int N = 17;
+        float aPeak = 0, bPeak = 0, maxStepA = 0, maxStepB = 0;
+        std::vector<float> va ((size_t) N), vb ((size_t) N);
+        for (int i = 0; i < N; ++i)
+        {
+            const float L = (float) i / (float) (N - 1);
+            va[(size_t) i] = ewMeasure (e, L, bA);
+            vb[(size_t) i] = ewMeasure (e, L, bB);
+            aPeak = juce::jmax (aPeak, va[(size_t) i]);
+            bPeak = juce::jmax (bPeak, vb[(size_t) i]);
+        }
+        for (int i = 1; i < N; ++i)
+        {
+            maxStepA = juce::jmax (maxStepA, std::abs (va[(size_t) i] - va[(size_t) i - 1]));
+            maxStepB = juce::jmax (maxStepB, std::abs (vb[(size_t) i] - vb[(size_t) i - 1]));
+        }
+        const float aMid = va[(size_t) (N / 2)], bMid = vb[(size_t) (N / 2)];
+        bool ok = va[0] > va[(size_t) (N - 1)] * 5.0f && vb[(size_t) (N - 1)] > vb[0] * 5.0f
+                  && aMid > aPeak * 0.05f && bMid > bPeak * 0.05f   // both audible mid-room
+                  && maxStepA < aPeak * 0.25f && maxStepB < bPeak * 0.25f;
+        printf ("[%s] ew two-tone smooth pan: A(E=%.3f,M=%.3f,W=%.4f step=%.3f) B(E=%.4f,M=%.3f,W=%.3f step=%.3f)\n",
+                ok ? "PASS" : "FAIL", va[0], aMid, va[(size_t) (N - 1)], maxStepA,
+                vb[0], bMid, vb[(size_t) (N - 1)], maxStepB);
+        fails += ok ? 0 : 1;
+    }
+
+    // ew3) re-recording a frequency drags its location: tone deposited at East, then the
+    // same frequency fed at West -> the tone's audibility moves West (grows at 1, shrinks at 0).
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        double pa = 0.0;
+        ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
+        const int bA = ewBin (1000.0f);
+        const float atE0 = ewMeasure (e, 0.0f, bA), atW0 = ewMeasure (e, 1.0f, bA);
+        ewDeposit (e, 1.0f, 1000.0f, 0.5f, pa); // re-record the same pitch at West
+        const float atE1 = ewMeasure (e, 0.0f, bA), atW1 = ewMeasure (e, 1.0f, bA);
+        bool ok = atW1 > atW0 * 5.0f && atE1 < atE0 * 0.7f;
+        printf ("[%s] ew re-record drags location: W %.4f->%.3f, E %.3f->%.3f\n",
+                ok ? "PASS" : "FAIL", atW0, atW1, atE0, atE1);
+        fails += ok ? 0 : 1;
+    }
+
+    // ew4) edits are distance-weighted: a permanent cut applied with the knob at East
+    // strongly reshapes the tone AT East and barely touches the tone at West.
     {
         SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
         double pa = 0.0, pb = 0.0;
@@ -822,16 +844,21 @@ int main()
         const int bA = ewBin (1000.0f), bB = ewBin (4000.0f);
         float aBase = ewMeasure (e, 0.0f, bA), bBase = ewMeasure (e, 1.0f, bB);
 
-        // permanent Sine-as-filter cut at 1 kHz, applied at East (active slot = A's slot)
-        SpectralEngine::Params c; c.feed = 0.0f; c.loss = 0.0f; c.ewLocation = 0.0f;
-        c.shapeAmt = 1.0f; c.shapeMode = 1.0f; c.shape = 4.0f;
-        c.shapeFreq = 1000.0f; c.shapeWidth = 0.35f; c.shapeCount = 0.0f; c.shapeLevel = -1.0f;
-        std::vector<float> b (block);
-        for (int blk = 0; blk < 60; ++blk) { std::fill (b.begin(), b.end(), 0.0f); e.process (b.data(), b.data(), block, c); }
-
+        // permanent full-band Level cut is frequency-agnostic; use the Sine shape twice
+        // instead: once at each tone's frequency, both applied with the knob AT EAST.
+        auto permCut = [&] (float hz)
+        {
+            SpectralEngine::Params c; c.feed = 0.0f; c.loss = 0.0f; c.ewLocation = 0.0f;
+            c.shapeAmt = 1.0f; c.shapeMode = 1.0f; c.shape = 4.0f;
+            c.shapeFreq = hz; c.shapeWidth = 0.35f; c.shapeCount = 0.0f; c.shapeLevel = -1.0f;
+            std::vector<float> b (block);
+            for (int blk = 0; blk < 60; ++blk) { std::fill (b.begin(), b.end(), 0.0f); e.process (b.data(), b.data(), block, c); }
+        };
+        permCut (1000.0f); // near tone: full strength
+        permCut (4000.0f); // far tone: attenuated by distance -> barely reaches it
         float aCut = ewMeasure (e, 0.0f, bA), bKept = ewMeasure (e, 1.0f, bB);
         bool ok = aCut < aBase * 0.4f && bKept > bBase * 0.7f;
-        printf ("[%s] ew permanent edit is per-slot: A base=%.3f cut=%.3f | B base=%.3f kept=%.3f\n",
+        printf ("[%s] ew distance-weighted edit: near base=%.3f cut=%.3f | far base=%.3f kept=%.3f\n",
                 ok ? "PASS" : "FAIL", aBase, aCut, bBase, bKept);
         fails += ok ? 0 : 1;
     }
