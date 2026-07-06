@@ -25,8 +25,11 @@ held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, 
   **shaper** (branch `exp/spectral-shaper`, implemented) that replaced Filter + Compress.
   The current behavior is documented in dsp-design.md / parameters.md; read this plan for
   the "why" behind the math constants.
-- [plan-reverb.md](plan-reverb.md) — plan (NOT yet implemented) for the output plate
-  reverb, branch `exp/reverb`. Full topology, parameters, tests, implementation order.
+- [plan-reverb.md](plan-reverb.md) — design rationale for the output plate reverb
+  (branch `exp/reverb`, implemented). Topology, constants, tests.
+- [plan-integration.md](plan-integration.md) — plan (NOT yet implemented) for
+  `exp/integration`: merge harmonize into shaper+reverb, param pages of 8, tabbed GUI,
+  per-module integration knobs, info bar. Includes the merge-conflict resolution map.
 
 ## Fast facts
 - JUCE lives at `../JUCE` (sibling of repo root), used via `add_subdirectory`. Modern

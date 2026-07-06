@@ -1,15 +1,18 @@
-Create a new branch `exp/reverb` from `exp/spectral-shaper`. Then implement the output
-plate reverb exactly as specified in `agent-wiki/plan-reverb.md` — read that file first,
-plus `agent-wiki/README.md` and the pages it links (house rules apply: update the wiki in
-the same task, `./build.sh` must be green with all tests passing).
+Create the integration branch `exp/integration` from `exp/reverb` and implement
+`agent-wiki/plan-integration.md` — read that file first, plus `agent-wiki/README.md` and
+the pages it links (house rules: update the wiki in the same task, `./build.sh` green with
+the union of both branches' tests).
 
-Follow the plan's §7 implementation order, one buildable step at a time:
-1. `Source/PlateReverb.{h,cpp}` (Dattorro plate, constants in plan §4) + the unit tests
-   from plan §6 in `test_main.cpp`. Iterate until tests pass.
-2. Processor wiring: 5 new APVTS params (`revMix/revDecay/revSize/revDamp/revPredelay`),
-   reverb between output gain and limiter, mono-sum in / stereo out, hard bypass +
-   reset at mix=0, tail length report.
-3. Editor: third knob row — Mix, Decay, Size, Damp, Predelay.
-4. Wiki updates per plan §8, flip the plan's status banner.
+Follow the plan's §8 order, one buildable step at a time:
+1. Merge `experimental/harmonize` into the new branch. Resolve conflicts per plan §1 —
+   especially the `SpectralEngine::processFrame` semantic conflict: `applyHarmonize`
+   goes right after `drainBrush()`, before the shaper precompute. Commit the merge alone.
+2. Reorder `createLayout()` into the plan §3 pages; add `dryWet` (latency-aligned dry
+   path, §4.1) + its test.
+3. Add `revFeed` (§4.2) + stability tests. Droppable if it can't be stabilized.
+4. Editor: persistent row (Feed/Loss/Dry-Wet/Output) + Shaper|Harmonize|Reverb tabs.
+5. Info bar with the plan §5 description texts; overlay gating by active tab.
+6. Wiki updates (§9), flip the plan banner.
 
-Do not change SpectralEngine. Commit in logical steps on `exp/reverb`.
+Do not modify the Dattorro constants in PlateReverb.cpp or the harmonize constants in
+SpectralEngine.cpp while resolving the merge. Commit in logical steps.
