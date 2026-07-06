@@ -24,6 +24,7 @@ private:
     };
 
     void setupKnob (Knob&, const juce::String& paramId, const juce::String& text);
+    void setActiveTab (int tabIndex); // 0 = Shaper, 1 = Harmonize, 2 = Reverb
 
     SpectralHoldProcessor& proc;
 
@@ -31,10 +32,16 @@ private:
 
     SpectrumDisplay display;
 
+    // persistent row (always visible)
     Knob feed, loss, dryWet, output;
+
+    // tabbed rows (one visible at a time)
     Knob shapeAmt, shapeMode, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel;
     Knob harmonize, harmWidth, harmonic;
     Knob revMix, revDecay, revSize, revDamp, revPredelay, revFeed;
+
+    juce::TextButton shaperTab { "Shaper" }, harmonizeTab { "Harmonize" }, reverbTab { "Reverb" };
+    int activeTab = 0;
 
     juce::Label    sizeLabel;
     juce::ComboBox sizeBox;

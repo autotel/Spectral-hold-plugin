@@ -6,11 +6,13 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setLookAndFeel (&lnf);
     addAndMakeVisible (display);
 
+    // persistent row
     setupKnob (feed,       "feed",       "Feed");
     setupKnob (loss,       "loss",       "Loss");
     setupKnob (dryWet,     "dryWet",     "Dry/Wet");
     setupKnob (output,     "output",     "Output");
 
+    // tabbed rows
     setupKnob (shapeAmt,   "shapeAmt",   "Amount");
     setupKnob (shapeMode,  "shapeMode",  "Mode");
     setupKnob (shape,      "shape",      "Shape");
@@ -29,6 +31,17 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (revDamp,     "revDamp",     "Damp");
     setupKnob (revPredelay, "revPredelay", "Predelay");
     setupKnob (revFeed,     "revFeed",     "Feed");
+
+    // tab strip (radio-style toggles switching the visible knob row)
+    for (auto* t : { &shaperTab, &harmonizeTab, &reverbTab })
+    {
+        t->setClickingTogglesState (true);
+        t->setRadioGroupId (1001);
+        addAndMakeVisible (*t);
+    }
+    shaperTab.onClick    = [this] { if (shaperTab.getToggleState())    setActiveTab (0); };
+    harmonizeTab.onClick = [this] { if (harmonizeTab.getToggleState()) setActiveTab (1); };
+    reverbTab.onClick    = [this] { if (reverbTab.getToggleState())    setActiveTab (2); };
 
     // FFT size: GUI-only (not a DAW parameter).
     addAndMakeVisible (sizeBox);
@@ -76,7 +89,8 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     saveSoundButton.onClick = [this] { proc.setSaveWithSound (saveSoundButton.getToggleState()); };
     addAndMakeVisible (saveSoundButton);
 
-    setSize (860, 640);
+    setActiveTab (0);
+    setSize (860, 560);
 }
 
 SpectralHoldEditor::~SpectralHoldEditor()
@@ -101,6 +115,31 @@ void SpectralHoldEditor::setupKnob (Knob& k, const juce::String& paramId, const 
     k.attach = std::make_unique<SliderAttach> (proc.apvts, paramId, k.slider);
 }
 
+void SpectralHoldEditor::setActiveTab (int tabIndex)
+{
+    activeTab = tabIndex;
+
+    Knob* shaperKnobs[]    = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
+    Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
+    Knob* reverbKnobs[]    = { &revMix, &revDecay, &revSize, &revDamp, &revPredelay, &revFeed };
+
+    auto show = [] (Knob* const* ks, int n, bool visible)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            ks[i]->slider.setVisible (visible);
+            ks[i]->label.setVisible (visible);
+        }
+    };
+    show (shaperKnobs,    7, tabIndex == 0);
+    show (harmonizeKnobs, 3, tabIndex == 1);
+    show (reverbKnobs,    6, tabIndex == 2);
+
+    shaperTab.setToggleState    (tabIndex == 0, juce::dontSendNotification);
+    harmonizeTab.setToggleState (tabIndex == 1, juce::dontSendNotification);
+    reverbTab.setToggleState    (tabIndex == 2, juce::dontSendNotification);
+}
+
 void SpectralHoldEditor::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff101014));
@@ -115,9 +154,6 @@ void SpectralHoldEditor::resized()
     // reserve the bottom row first so knobs never overlap it
     auto bottom = r.removeFromBottom (30).reduced (8, 5);
 
-    // knobs in the band between display and bottom row, kept small.
-    // Row 1: Feed/Loss/Output. Row 2: the spectral shaper (Amount/Mode/Shape/Freq/Width/Count/Level).
-    // Row 3: harmonize (Harmonize/Width/Harmonic). Row 4: the output reverb (Mix/Decay/Size/Damp/Predelay).
     auto layoutRow = [] (juce::Rectangle<int> area, Knob* const* knobs, int count)
     {
         const int kw = area.getWidth() / count;
@@ -131,19 +167,26 @@ void SpectralHoldEditor::resized()
     };
 
     auto controls = r.reduced (8, 4);
-    auto row1 = controls.removeFromTop (controls.getHeight() / 4);
-    auto row2 = controls.removeFromTop (controls.getHeight() / 3);
-    auto row3 = controls.removeFromTop (controls.getHeight() / 2);
-    auto row4 = controls;
 
+    // persistent row: the performance knobs, always visible
+    auto row1 = controls.removeFromTop ((controls.getHeight() - 28) / 2);
     Knob* row1Knobs[] = { &feed, &loss, &dryWet, &output };
-    Knob* row2Knobs[] = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
-    Knob* row3Knobs[] = { &harmonize, &harmWidth, &harmonic };
-    Knob* row4Knobs[] = { &revMix, &revDecay, &revSize, &revDamp, &revPredelay, &revFeed };
     layoutRow (row1, row1Knobs, 4);
-    layoutRow (row2, row2Knobs, 7);
-    layoutRow (row3, row3Knobs, 3);
-    layoutRow (row4, row4Knobs, 6);
+
+    // tab strip
+    auto tabs = controls.removeFromTop (28).reduced (0, 2);
+    const int tw = tabs.getWidth() / 3;
+    shaperTab.setBounds    (tabs.removeFromLeft (tw).reduced (2, 0));
+    harmonizeTab.setBounds (tabs.removeFromLeft (tw).reduced (2, 0));
+    reverbTab.setBounds    (tabs.reduced (2, 0));
+
+    // tabbed row: all three share the same area; visibility picks the active one
+    Knob* shaperKnobs[]    = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
+    Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
+    Knob* reverbKnobs[]    = { &revMix, &revDecay, &revSize, &revDamp, &revPredelay, &revFeed };
+    layoutRow (controls, shaperKnobs,    7);
+    layoutRow (controls, harmonizeKnobs, 3);
+    layoutRow (controls, reverbKnobs,    6);
 
     sizeBox.setBounds (bottom.removeFromRight (80));
     sizeLabel.setBounds (bottom.removeFromRight (50));
