@@ -28,6 +28,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (revSize,     "revSize",     "Size");
     setupKnob (revDamp,     "revDamp",     "Damp");
     setupKnob (revPredelay, "revPredelay", "Predelay");
+    setupKnob (revFeed,     "revFeed",     "Feed");
 
     // FFT size: GUI-only (not a DAW parameter).
     addAndMakeVisible (sizeBox);
@@ -138,11 +139,11 @@ void SpectralHoldEditor::resized()
     Knob* row1Knobs[] = { &feed, &loss, &dryWet, &output };
     Knob* row2Knobs[] = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
     Knob* row3Knobs[] = { &harmonize, &harmWidth, &harmonic };
-    Knob* row4Knobs[] = { &revMix, &revDecay, &revSize, &revDamp, &revPredelay };
+    Knob* row4Knobs[] = { &revMix, &revDecay, &revSize, &revDamp, &revPredelay, &revFeed };
     layoutRow (row1, row1Knobs, 4);
     layoutRow (row2, row2Knobs, 7);
     layoutRow (row3, row3Knobs, 3);
-    layoutRow (row4, row4Knobs, 5);
+    layoutRow (row4, row4Knobs, 6);
 
     sizeBox.setBounds (bottom.removeFromRight (80));
     sizeLabel.setBounds (bottom.removeFromRight (50));
