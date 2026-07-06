@@ -1,5 +1,6 @@
 #include "SpectralEngine.h"
 #include "ShapeCurves.h"
+#include <numeric> // std::gcd
 
 namespace
 {
@@ -12,6 +13,15 @@ namespace
                                           // "compress equivalence": don't change independently)
     constexpr float kLn4       = 1.386294361f; // momentary boost ceiling: +12 dB at L=1
     constexpr float kPhaseNoise   = 0.15f; // rad of per-frame phase jitter when noise is on
+    // harmonize
+    constexpr float kEntRate   = 0.12f;  // per-frame fraction toward the entrainment target
+    constexpr float kHarmRate  = 0.12f;  // per-frame fraction toward the harmonic target
+    constexpr float kHarmStep  = 0.05f;  // clamp on per-frame omega shift (rad/hop)
+    constexpr float kPeakFloor = 0.03f;  // peak threshold as a fraction of the max magnitude.
+                                         // ~-30 dB: just above Hann's ~-31 dB first sidelobe
+                                         // (so leakage isn't mistaken for a tone) but low
+                                         // enough to include fairly quiet tones in harmonizing.
+    constexpr int   kMaxDen    = 6;      // largest harmonic ratio denominator/numerator
 }
 
 void SpectralEngine::prepare (double sr, int maxFftOrder)
@@ -25,6 +35,13 @@ void SpectralEngine::prepare (double sr, int maxFftOrder)
     dispScratch.assign ((size_t) (maxFftSize / 2 + 1), {});
     brushPending.reserve (256);
     brushScratch.reserve (256);
+    peakBin.assign   ((size_t) kMaxPeaks, 0);
+    peakFreq.assign  ((size_t) kMaxPeaks, 0.0f);
+    peakAmp.assign   ((size_t) kMaxPeaks, 0.0f);
+    peakDelta.assign ((size_t) kMaxPeaks, 0.0f);
+    dispPeakF.assign ((size_t) kMaxPeaks, 0.0f);
+    dispPeakA.assign ((size_t) kMaxPeaks, 0.0f);
+    dispPeakD.assign ((size_t) kMaxPeaks, 0.0f);
     inRing.assign  ((size_t) maxFftSize, 0.0f);
     outRing.assign ((size_t) maxFftSize, 0.0f);
     window.assign  ((size_t) maxFftSize, 0.0f);
@@ -130,6 +147,12 @@ void SpectralEngine::processFrame (const Params& p)
     fft->performRealOnlyForwardTransform (fftData.data());
 
     drainBrush(); // apply any pending GUI edits to the held spectrum
+
+    // --- harmonize: tones pull on each other's pitch (coupled oscillators). A state
+    // edit like drainBrush (rewrites S/omega/prevPhase, may migrate energy across
+    // bins), so it runs BEFORE the shaper precompute -- the Level-shape mean must be
+    // computed on the post-migration spectrum.
+    applyHarmonize (p);
 
     // --- shaper: per-bin signed change L[k] in [-1..+1] from a cross-faded math curve
     // (ShapeCurves.h), applied as a permanent multiply on S (compounding, replaces
@@ -312,6 +335,230 @@ void SpectralEngine::drainBrush()
     brushScratch.clear();
 }
 
+void SpectralEngine::applyHarmonize (const Params& p)
+{
+    // Harmonize is the master amount; Harmonic only blends the *character* (0 = averaging /
+    // entrainment, 1 = harmonic attraction). So Harmonic does nothing while Harmonize is 0.
+    if (p.harmonize <= 1.0e-4f)
+    {
+        const juce::ScopedTryLock stl (displayLock);
+        if (stl.isLocked()) dispPeakN = 0; // clear the influence overlay
+        return;
+    }
+
+    // low-denominator harmonic ratios (built once): value, log2(value), weight 1/(n*m)
+    struct Ratio { float l2, invDen; };
+    static const std::vector<Ratio> ratios = []
+    {
+        std::vector<Ratio> r;
+        for (int n = 1; n <= kMaxDen; ++n)
+            for (int m = 1; m <= kMaxDen; ++m)
+                if (std::gcd (n, m) == 1)
+                    r.push_back ({ std::log2 ((float) n / (float) m), 1.0f / (float) (n * m) });
+        return r;
+    }();
+
+    // omega (rad/hop) <-> frequency (Hz): f = omega * fScale
+    const float fScale = (float) sampleRate / ((float) hopSize * juce::MathConstants<float>::twoPi);
+
+    // 1. extract significant spectral peaks (local maxima)
+    float maxMag = 0.0f;
+    for (int k = 1; k < numBins; ++k) maxMag = juce::jmax (maxMag, std::abs (S[(size_t) k]));
+    if (maxMag < 1.0e-9f) return;
+    const float floor = maxMag * kPeakFloor;
+
+    int P = 0;
+    for (int k = 4; k < numBins - 4 && P < kMaxPeaks; ++k)
+    {
+        const float a = std::abs (S[(size_t) k]);
+        if (a <= floor) continue;
+        // prominence: local max over +/-1 bin only (the floor rejects Hann sidelobes). A wider
+        // window would suppress the quieter of two close tones, counting them as one peak so
+        // they never entrain against each other; +/-1 resolves tones down to ~2 bins apart
+        // while a single tone's mainlobe is still a single peak.
+        bool isPeak = true;
+        for (int o = -1; o <= 1 && isPeak; ++o)
+            if (o != 0 && std::abs (S[(size_t) (k + o)]) > a) isPeak = false;
+        if (isPeak)
+        {
+            peakBin[(size_t) P]   = k;
+            peakAmp[(size_t) P]   = a;
+            peakFreq[(size_t) P]  = omega[(size_t) k] * fScale;
+            peakDelta[(size_t) P] = 0.0f;
+            ++P;
+        }
+    }
+    if (P < 2) return;
+
+    // 1b. merge near-unison peaks into one centred phasor. Two tones that have entrained to
+    // within ~a bin still sit a hair mistuned and beat forever. Just equalising their frequency
+    // is not enough: a phasor stored away from its bin centre produces an amplitude ripple from
+    // the overlap-add (itself a beat). So we sum their energy into the single bin nearest the
+    // common frequency and clear both packets — one centred phasor = clean, steady, no beat.
+    constexpr int kPad = 3;                                    // packet half-width (shared with migration)
+    const float binHz = (float) sampleRate / (float) fftSize;
+    const float lockTolHz = binHz * 2.0f;
+    for (int i = 0; i < P; ++i)
+        for (int j = i + 1; j < P; )
+        {
+            if (std::abs (peakFreq[(size_t) i] - peakFreq[(size_t) j]) >= lockTolHz) { ++j; continue; }
+
+            const int bi = peakBin[(size_t) i], bj = peakBin[(size_t) j];
+            const float wi = std::abs (S[(size_t) bi]), wj = std::abs (S[(size_t) bj]);
+            const float mo = (wi * omega[(size_t) bi] + wj * omega[(size_t) bj]) / (wi + wj + 1.0e-12f);
+            const std::complex<float> combined = S[(size_t) bi] + S[(size_t) bj];
+            const int target = juce::jlimit (1, numBins - 2, (int) std::lround (mo * fScale / binHz));
+
+            for (int base : { bi, bj })
+                for (int o = -kPad; o <= kPad; ++o)
+                {
+                    const int idx = base + o;
+                    if (idx >= 1 && idx < numBins)
+                    {
+                        S[(size_t) idx]     = std::complex<float> {};
+                        omega[(size_t) idx] = expectedAdv[(size_t) idx];
+                    }
+                }
+            S[(size_t) target]     = combined;
+            omega[(size_t) target] = mo;
+
+            peakBin[(size_t) i]  = target;
+            peakAmp[(size_t) i]  = std::abs (combined);
+            peakFreq[(size_t) i] = mo * fScale;
+            --P; // swap-remove peak j
+            peakBin[(size_t) j]  = peakBin[(size_t) P];
+            peakAmp[(size_t) j]  = peakAmp[(size_t) P];
+            peakFreq[(size_t) j] = peakFreq[(size_t) P];
+            peakDelta[(size_t) j] = peakDelta[(size_t) P];
+        }
+    if (P < 1) return;
+
+    const float invSig2 = 1.0f / (2.0f * juce::jmax (0.005f, p.harmWidth) * p.harmWidth);
+
+    // 2. reciprocal pull: compute every peak's drift from the same snapshot
+    for (int i = 0; i < P; ++i)
+    {
+        const float fi = peakFreq[(size_t) i];
+        if (fi <= 0.0f) continue;
+        double entNum = 0.0, entDen = 0.0, harmNum = 0.0, harmDen = 0.0;
+
+        for (int j = 0; j < P; ++j)
+        {
+            if (j == i) continue;
+            const float fj = peakFreq[(size_t) j];
+            if (fj <= 0.0f) continue;
+
+            const float doct = std::log2 (fj / fi);
+            const float w    = std::exp (-doct * doct * invSig2);
+            const float aw   = w * peakAmp[(size_t) j];
+
+            // entrainment: drift toward neighbours (amplitude-weighted average)
+            entNum += aw * (fj - fi);
+            entDen += aw;
+
+            // harmonic: drift toward fj * (nearest low-denominator ratio)
+            if (p.harmonic > 1.0e-4f)
+            {
+                const float lr = std::log2 (fi / fj);
+                float bestL2 = 0.0f, bestInv = 0.0f, bestDist = 1.0e9f;
+                for (const auto& r : ratios)
+                {
+                    const float d = std::abs (r.l2 - lr);
+                    if (d < bestDist) { bestDist = d; bestL2 = r.l2; bestInv = r.invDen; }
+                }
+                const float target = fj * std::exp2 (bestL2);
+                const float hw = aw * bestInv;
+                harmNum += hw * (target - fi);
+                harmDen += hw;
+            }
+        }
+
+        // blend the two characters: Harmonic = 0 pure entrainment, 1 pure harmonic.
+        const float entDrift  = (entDen  > 0.0) ? (float) (entNum  / entDen)  : 0.0f;
+        const float harmDrift = (harmDen > 0.0) ? (float) (harmNum / harmDen) : 0.0f;
+        const float blended   = (1.0f - p.harmonic) * entDrift + p.harmonic * harmDrift;
+        const float df        = p.harmonize * kHarmRate * blended;
+
+        peakDelta[(size_t) i] = juce::jlimit (-kHarmStep, kHarmStep, df / fScale); // -> rad/hop
+    }
+
+    // snapshot peaks for the influence overlay (freq, weight, drift in Hz)
+    if (const juce::ScopedTryLock stl (displayLock); stl.isLocked())
+    {
+        dispPeakN = juce::jmin (P, kMaxPeaks);
+        for (int i = 0; i < dispPeakN; ++i)
+        {
+            dispPeakF[(size_t) i] = peakFreq[(size_t) i];
+            dispPeakA[(size_t) i] = peakAmp[(size_t) i];
+            dispPeakD[(size_t) i] = peakDelta[(size_t) i] * fScale; // rad/hop -> Hz drift
+        }
+    }
+
+    // 3. apply the shift to each peak's bin and its immediate leakage neighbours
+    for (int i = 0; i < P; ++i)
+    {
+        const int   k = peakBin[(size_t) i];
+        const float d = peakDelta[(size_t) i];
+        if (d == 0.0f) continue;
+        for (int o = -2; o <= 2; ++o)
+        {
+            const int kk = k + o;
+            if (kk < 1 || kk >= numBins) continue;
+            const float lo = expectedAdv[(size_t) kk] - juce::MathConstants<float>::pi;
+            const float hi = expectedAdv[(size_t) kk] + juce::MathConstants<float>::pi;
+            omega[(size_t) kk] = juce::jlimit (lo, hi, omega[(size_t) kk] + d);
+        }
+    }
+
+    // 4. energy migration across bins. A single bin's phasor only represents a frequency
+    // within ~half a bin of its centre. When a peak's centre drifts past half a bin, shift
+    // its whole packet (centre +/- kPad bins) RIGIDLY by one bin, carrying each bin's complex
+    // value, omega (frequency-absolute) and phase. Shifting the packet as a unit keeps the
+    // peak coherent (moving bins independently tears it apart); omega is preserved so the
+    // pitch is continuous, and the tone can travel any distance one bin at a time.
+    const float binW = juce::MathConstants<float>::twoPi * (float) hopSize / (float) fftSize;
+    const float half = binW * 0.5f;
+    for (int i = 0; i < P; ++i)
+    {
+        const int k = peakBin[(size_t) i];
+        const float rel = omega[(size_t) k] - expectedAdv[(size_t) k];
+        const int s = (rel > half) ? +1 : (rel < -half) ? -1 : 0;
+        if (s == 0) continue;
+        if (k - kPad < 1 || k + kPad >= numBins - 1) continue; // near edges: don't migrate
+
+        // collision avoidance: only skip when a neighbour is close enough that the packets
+        // heavily overlap (would trample each other). Use kPad (not 2*kPad) so lightly
+        // overlapping tones still re-centre instead of being stranded off their bin centre
+        // (which leaves the energy and the actual pitch/marker visibly misaligned).
+        bool nearNeighbour = false;
+        for (int j = 0; j < P && ! nearNeighbour; ++j)
+            if (j != i && std::abs (peakBin[(size_t) j] - k) <= kPad)
+                nearNeighbour = true;
+        if (nearNeighbour) continue;
+
+        // move src -> src+s for the whole packet, ordered so we never overwrite a not-yet-moved bin
+        if (s > 0)
+            for (int b = k + kPad; b >= k - kPad; --b)
+            {
+                S[(size_t) (b + 1)]        = S[(size_t) b];
+                omega[(size_t) (b + 1)]    = omega[(size_t) b];
+                prevPhase[(size_t) (b + 1)] = prevPhase[(size_t) b];
+            }
+        else
+            for (int b = k - kPad; b <= k + kPad; ++b)
+            {
+                S[(size_t) (b - 1)]        = S[(size_t) b];
+                omega[(size_t) (b - 1)]    = omega[(size_t) b];
+                prevPhase[(size_t) (b - 1)] = prevPhase[(size_t) b];
+            }
+
+        // clear the bin vacated at the trailing edge and neutralise its omega
+        const int vac = (s > 0) ? (k - kPad) : (k + kPad);
+        S[(size_t) vac] = std::complex<float> {};
+        omega[(size_t) vac] = expectedAdv[(size_t) vac];
+    }
+}
+
 int SpectralEngine::copyDisplay (std::vector<float>& mag, std::vector<float>& phase)
 {
     const juce::ScopedTryLock stl (displayLock);
@@ -321,6 +568,20 @@ int SpectralEngine::copyDisplay (std::vector<float>& mag, std::vector<float>& ph
     mag.assign   (dispMag.begin(),   dispMag.begin()   + numBins);
     phase.assign (dispPhase.begin(), dispPhase.begin() + numBins);
     return numBins;
+}
+
+int SpectralEngine::copyPeaks (std::vector<float>& freq, std::vector<float>& weight,
+                               std::vector<float>& drift)
+{
+    const juce::ScopedTryLock stl (displayLock);
+    if (! stl.isLocked())
+        return -1; // busy: keep last frame
+
+    const int n = dispPeakN;
+    freq.assign   (dispPeakF.begin(), dispPeakF.begin() + n);
+    weight.assign (dispPeakA.begin(), dispPeakA.begin() + n);
+    drift.assign  (dispPeakD.begin(), dispPeakD.begin() + n);
+    return n;
 }
 
 void SpectralEngine::writeAudioState (juce::MemoryOutputStream& os) const

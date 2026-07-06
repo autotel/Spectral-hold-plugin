@@ -21,15 +21,17 @@ held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, 
 - [gui-display.md](gui-display.md) — the custom "lighting" spectrum view.
 - [build-and-test.md](build-and-test.md) — configure, build, run the offline test.
 - [gotchas.md](gotchas.md) — traps, decisions already made, things that look like bugs but aren't.
+- [harmonize.md](harmonize.md) — coupled-oscillator tone interaction (entrainment +
+  harmonic attraction), integrated on `exp/integration`.
 - [plan-spectral-shaper.md](plan-spectral-shaper.md) — design rationale for the spectral
   **shaper** (branch `exp/spectral-shaper`, implemented) that replaced Filter + Compress.
   The current behavior is documented in dsp-design.md / parameters.md; read this plan for
   the "why" behind the math constants.
 - [plan-reverb.md](plan-reverb.md) — design rationale for the output plate reverb
   (branch `exp/reverb`, implemented). Topology, constants, tests.
-- [plan-integration.md](plan-integration.md) — plan (NOT yet implemented) for
-  `exp/integration`: merge harmonize into shaper+reverb, param pages of 8, tabbed GUI,
-  per-module integration knobs, info bar. Includes the merge-conflict resolution map.
+- [plan-integration.md](plan-integration.md) — plan for `exp/integration`: merge harmonize
+  into shaper+reverb, param pages of 8, tabbed GUI, per-module integration knobs, info bar.
+  Includes the merge-conflict resolution map.
 
 ## Fast facts
 - JUCE lives at `../JUCE` (sibling of repo root), used via `add_subdirectory`. Modern

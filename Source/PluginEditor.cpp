@@ -18,6 +18,10 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (shapeCount, "shapeCount", "Count");
     setupKnob (shapeLevel, "shapeLevel", "Level");
 
+    setupKnob (harmonize,  "harmonize",  "Harmonize");
+    setupKnob (harmWidth,  "harmWidth",  "Width");
+    setupKnob (harmonic,   "harmonic",   "Harmonic");
+
     setupKnob (revMix,      "revMix",      "Mix");
     setupKnob (revDecay,    "revDecay",    "Decay");
     setupKnob (revSize,     "revSize",     "Size");
@@ -70,7 +74,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     saveSoundButton.onClick = [this] { proc.setSaveWithSound (saveSoundButton.getToggleState()); };
     addAndMakeVisible (saveSoundButton);
 
-    setSize (860, 560);
+    setSize (860, 640);
 }
 
 SpectralHoldEditor::~SpectralHoldEditor()
@@ -111,7 +115,7 @@ void SpectralHoldEditor::resized()
 
     // knobs in the band between display and bottom row, kept small.
     // Row 1: Feed/Loss/Output. Row 2: the spectral shaper (Amount/Mode/Shape/Freq/Width/Count/Level).
-    // Row 3: the output reverb (Mix/Decay/Size/Damp/Predelay).
+    // Row 3: harmonize (Harmonize/Width/Harmonic). Row 4: the output reverb (Mix/Decay/Size/Damp/Predelay).
     auto layoutRow = [] (juce::Rectangle<int> area, Knob* const* knobs, int count)
     {
         const int kw = area.getWidth() / count;
@@ -125,16 +129,19 @@ void SpectralHoldEditor::resized()
     };
 
     auto controls = r.reduced (8, 4);
-    auto row1 = controls.removeFromTop (controls.getHeight() / 3);
-    auto row2 = controls.removeFromTop (controls.getHeight() / 2);
-    auto row3 = controls;
+    auto row1 = controls.removeFromTop (controls.getHeight() / 4);
+    auto row2 = controls.removeFromTop (controls.getHeight() / 3);
+    auto row3 = controls.removeFromTop (controls.getHeight() / 2);
+    auto row4 = controls;
 
     Knob* row1Knobs[] = { &feed, &loss, &output };
     Knob* row2Knobs[] = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
-    Knob* row3Knobs[] = { &revMix, &revDecay, &revSize, &revDamp, &revPredelay };
+    Knob* row3Knobs[] = { &harmonize, &harmWidth, &harmonic };
+    Knob* row4Knobs[] = { &revMix, &revDecay, &revSize, &revDamp, &revPredelay };
     layoutRow (row1, row1Knobs, 3);
     layoutRow (row2, row2Knobs, 7);
-    layoutRow (row3, row3Knobs, 5);
+    layoutRow (row3, row3Knobs, 3);
+    layoutRow (row4, row4Knobs, 5);
 
     sizeBox.setBounds (bottom.removeFromRight (80));
     sizeLabel.setBounds (bottom.removeFromRight (50));

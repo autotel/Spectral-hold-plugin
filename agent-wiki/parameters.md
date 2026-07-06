@@ -4,8 +4,9 @@ DAW-facing parameters are defined in `SpectralHoldProcessor::createLayout()`.
 The engine consumes them via `SpectralEngine::Params`. FFT size is separate (GUI-only).
 
 Knob order in the editor: **row 1** Feed, Loss, Output; **row 2** Amount, Mode, Shape,
-Freq, Width, Count, Level (the spectral **shaper** — see below); **row 3** Mix, Decay,
-Size, Damp, Predelay (the output **reverb** — see below).
+Freq, Width, Count, Level (the spectral **shaper** — see below); **row 3** Harmonize,
+Width, Harmonic (see [harmonize.md](harmonize.md)); **row 4** Mix, Decay, Size, Damp,
+Predelay (the output **reverb** — see below).
 
 | GUI / id            | Range          | Default | Meaning / mapping |
 |---------------------|----------------|---------|-------------------|
@@ -28,6 +29,9 @@ Size, Damp, Predelay (the output **reverb** — see below).
 | FT Size (GUI only)  | 1024 .. 8192   | 4096    | FFT size. `ComboBox`, powers of two. Not a DAW parameter. |
 | Live / 0 PDC (GUI only) | bool       | off     | Reports **0 latency** to the host (no plugin delay compensation) for live use. The real STFT latency is unchanged; the host just stops delay-compensating. |
 | Save sound (GUI only)   | bool       | off     | When on, the saved preset **includes the held spectral state** (per-engine S/omega/phase/Xs), so reloading restores the ongoing frozen sound. |
+| Harmonize `harmonize` | 0 .. 0.1   | 0.0     | *(experimental branch)* Master amount of coupled-oscillator pitch interaction. See [harmonize.md](harmonize.md). |
+| Width `harmWidth`     | 0.01 .. 3 oct | 0.5  | *(experimental)* σ of the nearness-influence curve. |
+| Harmonic `harmonic`   | 0 .. 1     | 0.0     | *(experimental)* Character blend under Harmonize: 0 = entrainment, 1 = harmonic attraction. |
 
 **Attack** was removed — lowering Feed gives the same slowed-onset effect.
 **Filter and Compress were removed** — replaced by the shaper (`shape=4, level<0` reproduces

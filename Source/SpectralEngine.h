@@ -28,6 +28,11 @@ public:
         float shapeWidth = 0.5f;    // 0..1  width/steepness/spacing, meaning per shape
         float shapeCount = 1.0f;    // 0..1  extent/repetition, meaning per shape
         float shapeLevel = 0.0f;    // -1..+1  signed strength; 0 = no effect for every shape
+
+        // Harmonize (coupled-oscillator tone interaction, see agent-wiki/harmonize.md)
+        float harmonize  = 0.0f;    // 0..1  entrainment: tones drift to amplitude-weighted mean
+        float harmWidth  = 0.5f;    // octaves, sigma of the nearness-influence curve
+        float harmonic   = 0.0f;    // 0..1  attraction toward low-denominator harmonic ratios
     };
 
     void prepare (double sampleRate, int maxFftOrder);
@@ -46,6 +51,10 @@ public:
     // Display snapshot: copies current per-bin magnitude (normalised) and phase.
     // Returns numBins, or 0 if the engine is mid-reconfigure (non-blocking).
     int copyDisplay (std::vector<float>& mag, std::vector<float>& phase);
+
+    // Harmonize influence snapshot: per detected peak, its frequency (Hz), weight (|S|) and
+    // current pitch drift (Hz, signed). Returns the peak count (0 when harmonize is off).
+    int copyPeaks (std::vector<float>& freq, std::vector<float>& weight, std::vector<float>& drift);
 
     // Serialize / restore the held spectral state (for "save preset with the ongoing sound").
     // NOT real-time safe: call with processing stopped or under an external lock.
@@ -66,6 +75,7 @@ private:
     void configure (int fftOrder);
     void processFrame (const Params& p);
     void drainBrush();
+    void applyHarmonize (const Params& p);
 
     double sampleRate = 44100.0;
     int maxFftSize = 0, maxOrder = 0;
@@ -89,6 +99,14 @@ private:
     std::vector<float> omega;             // measured per-hop phase advance per bin (rad)
     std::vector<float> prevPhase;         // last input phase per bin, for unwrapping
     juce::Random rng;                     // phase-noise source (audio thread only)
+
+    // harmonize peak scratch (preallocated; capped at kMaxPeaks)
+    static constexpr int kMaxPeaks = 128;
+    std::vector<int>   peakBin;
+    std::vector<float> peakFreq, peakAmp, peakDelta;
+    // peak snapshot for the GUI influence overlay (guarded by displayLock)
+    std::vector<float> dispPeakF, dispPeakA, dispPeakD;
+    int dispPeakN = 0;
 
     // scratch (length 2*maxFftSize for juce real-only transform)
     std::vector<float> fftData;

@@ -363,6 +363,129 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // 9) harmonize: with two close tones held, it perturbs the output but stays bounded
+    {
+        auto runHarm = [&] (float amount, std::vector<float>& tail)
+        {
+            SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+            std::vector<float> b (block);
+            double a = 0.0, c = 0.0, wa = 2.0 * M_PI * 400.0 / sr, wc = 2.0 * M_PI * 520.0 / sr;
+            for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+            {
+                for (int i = 0; i < block; ++i) { b[i] = 0.4f * (float) std::sin (a) + 0.4f * (float) std::sin (c); a += wa; c += wc; }
+                e2.process (b.data(), b.data(), block, p);
+            }
+            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.harmonize = amount; h.harmWidth = 1.0f;
+            float mx = 0.0f;
+            for (int blk = 0; blk < 80; ++blk)
+            {
+                std::fill (b.begin(), b.end(), 0.0f);
+                e2.process (b.data(), b.data(), block, h);
+                for (int i = 0; i < block; ++i) mx = juce::jmax (mx, std::abs (b[i]));
+            }
+            tail.assign (b.begin(), b.end());
+            return mx;
+        };
+        std::vector<float> off, on;
+        runHarm (0.0f, off);
+        float mxOn = runHarm (1.0f, on);
+        float diff = 0.0f;
+        for (int i = 0; i < block; ++i) diff = juce::jmax (diff, std::abs (off[i] - on[i]));
+        bool ok = std::isfinite (mxOn) && mxOn < 5.0f && diff > 1.0e-4f;
+        printf ("[%s] harmonize: changes=%.2e maxAbsOn=%.3f\n", ok ? "PASS" : "FAIL", diff, mxOn);
+        fails += ok ? 0 : 1;
+    }
+
+    // 10) energy migration: a tone pulled toward a far harmonic crosses bins (> omega-only
+    //     reach ~2 bins / ~23 Hz at 4096/48k), proving the energy actually moved.
+    {
+        SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+        std::vector<float> b (block);
+        // dominant fixed anchor at 1000, weak tone at 1400 (-> nearest ratio 4/3 -> 1333 Hz)
+        double a = 0.0, c = 0.0, wa = 2.0 * M_PI * 1400.0 / sr, wc = 2.0 * M_PI * 1000.0 / sr;
+        for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+        {
+            for (int i = 0; i < block; ++i) { b[i] = 0.1f * (float) std::sin (a) + 0.9f * (float) std::sin (c); a += wa; c += wc; }
+            e2.process (b.data(), b.data(), block, p);
+        }
+        SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.harmonize = 1.0f; h.harmonic = 1.0f; h.harmWidth = 1.5f;
+        for (int blk = 0; blk < 600; ++blk) { std::fill (b.begin(), b.end(), 0.0f); e2.process (b.data(), b.data(), block, h); }
+
+        std::vector<float> pf, pw, pd; int n = 0;
+        for (int t = 0; t < 8 && n <= 0; ++t) { std::fill (b.begin(), b.end(), 0.0f); e2.process (b.data(), b.data(), block, h); n = e2.copyPeaks (pf, pw, pd); }
+        // the weak tone tracks the anchor's harmonic (~4/3). It must drop below the
+        // omega-only floor (~1383 Hz for its home bin) to prove energy actually migrated.
+        float weak = 1400.0f;
+        for (int i = 0; i < n; ++i) if (pf[(size_t) i] > 1250.0f && pf[(size_t) i] < 1395.0f) weak = pf[(size_t) i];
+        bool ok = n > 0 && weak < 1382.0f;
+        printf ("[%s] energy migration: weak tone 1400 -> %.0f Hz (past omega-only floor)\n",
+                ok ? "PASS" : "FAIL", weak);
+        fails += ok ? 0 : 1;
+    }
+
+    // 11) unison lock: two close tones entrain, lock to one frequency, and stop beating
+    //     (block-RMS becomes steady instead of pulsing).
+    {
+        auto beatDepth = [&] (float harmonize)
+        {
+            SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+            std::vector<float> b (block);
+            double a = 0.0, c = 0.0, wa = 2.0 * M_PI * 500.0 / sr, wc = 2.0 * M_PI * 560.0 / sr;
+            for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+            {
+                for (int i = 0; i < block; ++i) { b[i] = 0.45f * (float) std::sin (a) + 0.45f * (float) std::sin (c); a += wa; c += wc; }
+                e2.process (b.data(), b.data(), block, p);
+            }
+            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.harmonize = harmonize; h.harmWidth = 1.0f;
+            for (int blk = 0; blk < 600; ++blk) { std::fill (b.begin(), b.end(), 0.0f); e2.process (b.data(), b.data(), block, h); }
+            float mn = 1.0e9f, mx = 0.0f;
+            for (int blk = 0; blk < 120; ++blk)
+            {
+                std::fill (b.begin(), b.end(), 0.0f); e2.process (b.data(), b.data(), block, h);
+                float r = rms (b.data(), block);
+                mn = juce::jmin (mn, r); mx = juce::jmax (mx, r);
+            }
+            return mx > 1.0e-6f ? (mx - mn) / mx : 0.0f; // 0 = steady, ->1 = strong beating
+        };
+        float off = beatDepth (0.0f);   // no harmonize: tones beat
+        float on  = beatDepth (1.0f);   // harmonize: should lock -> steady
+        bool ok = on < 0.5f * off || on < 0.1f;
+        printf ("[%s] unison lock: beat depth off=%.2f on=%.2f\n", ok ? "PASS" : "FAIL", off, on);
+        fails += ok ? 0 : 1;
+    }
+
+    // 12) peak detection: a close pair is resolved as TWO peaks, and a quiet tone is included
+    {
+        SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+        std::vector<float> b (block);
+        double p1 = 0, p2 = 0, p3 = 0, p4 = 0;
+        const double w1 = 2.0 * M_PI * 600.0 / sr,  w2 = 2.0 * M_PI * 635.0 / sr;   // close pair (~3 bins)
+        const double w3 = 2.0 * M_PI * 1000.0 / sr, w4 = 2.0 * M_PI * 1500.0 / sr;  // loud + quiet (-26 dB)
+        for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                b[i] = 0.4f * (float) std::sin (p1) + 0.4f * (float) std::sin (p2)
+                     + 0.8f * (float) std::sin (p3) + 0.04f * (float) std::sin (p4);
+                p1 += w1; p2 += w2; p3 += w3; p4 += w4;
+            }
+            e2.process (b.data(), b.data(), block, p);
+        }
+        SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.harmonize = 0.01f; h.harmWidth = 1.0f;
+        std::vector<float> pf, pw, pd; int n = 0;
+        for (int t = 0; t < 10 && n <= 0; ++t) { std::fill (b.begin(), b.end(), 0.0f); e2.process (b.data(), b.data(), block, h); n = e2.copyPeaks (pf, pw, pd); }
+        int pair = 0, quiet = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            if (pf[(size_t) i] > 580.0f && pf[(size_t) i] < 660.0f) ++pair;
+            if (pf[(size_t) i] > 1440.0f && pf[(size_t) i] < 1560.0f) ++quiet;
+        }
+        bool ok = pair == 2 && quiet >= 1;
+        printf ("[%s] peak detection: close pair=%d (expect 2), quiet tone=%d (expect >=1)\n",
+                ok ? "PASS" : "FAIL", pair, quiet);
+        fails += ok ? 0 : 1;
+    }
+
     // audio-state save/restore: a held sound survives a serialize -> fresh engine -> restore
     {
         SpectralEngine src; src.prepare (sr, 13); src.setOrder (12); src.reset();

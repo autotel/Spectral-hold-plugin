@@ -26,6 +26,10 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pShapeCount = apvts.getRawParameterValue ("shapeCount");
     pShapeLevel = apvts.getRawParameterValue ("shapeLevel");
 
+    pHarmonize  = apvts.getRawParameterValue ("harmonize");
+    pHarmWidth  = apvts.getRawParameterValue ("harmWidth");
+    pHarmonic   = apvts.getRawParameterValue ("harmonic");
+
     pRevMix      = apvts.getRawParameterValue ("revMix");
     pRevDecay    = apvts.getRawParameterValue ("revDecay");
     pRevSize     = apvts.getRawParameterValue ("revSize");
@@ -102,6 +106,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revPredelay", 1 }, "Reverb Predelay",
         NormalisableRange<float> (0.0f, 250.0f, 0.0f, 0.35f), 20.0f)); // ms, log-ish skew
+
+    // Harmonize (coupled-oscillator tone interaction; see agent-wiki/harmonize.md)
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "harmonize", 1 }, "Harmonize",
+        NormalisableRange<float> (0.0f, 0.1f), 0.0f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "harmWidth", 1 }, "Harm Width",
+        NormalisableRange<float> (0.01f, 3.0f, 0.0f, 0.4f), 0.5f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "harmonic", 1 }, "Harmonic",
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
 
     return layout;
 }
@@ -182,6 +199,9 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     p.feed       = pFeed->load();
     p.loss       = pLoss->load();
     p.phaseNoise = pPhaseNoise->load() > 0.5f;
+    p.harmonize  = pHarmonize->load();
+    p.harmWidth  = pHarmWidth->load();
+    p.harmonic   = pHarmonic->load();
 
     p.shapeAmt   = pShapeAmt->load();
     p.shapeMode  = pShapeMode->load();

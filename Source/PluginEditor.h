@@ -33,6 +33,7 @@ private:
 
     Knob feed, loss, output;
     Knob shapeAmt, shapeMode, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel;
+    Knob harmonize, harmWidth, harmonic;
     Knob revMix, revDecay, revSize, revDamp, revPredelay;
 
     juce::Label    sizeLabel;
