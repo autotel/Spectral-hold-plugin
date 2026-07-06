@@ -16,6 +16,7 @@ SpectralHoldProcessor::SpectralHoldProcessor()
 {
     pFeed   = apvts.getRawParameterValue ("feed");
     pLoss   = apvts.getRawParameterValue ("loss");
+    pEwLocation = apvts.getRawParameterValue ("ewLocation");
     pDryWet = apvts.getRawParameterValue ("dryWet");
     pOutput = apvts.getRawParameterValue ("output");
     pPhaseNoise = apvts.getRawParameterValue ("phaseNoise");
@@ -56,6 +57,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "loss", 1 }, "Loss",
         NormalisableRange<float> (0.0f, 1.0f), 0.2f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "ewLocation", 1 }, "E<->W",
+        NormalisableRange<float> (0.0f, 1.0f), 0.5f)); // East(0)..West(1) location field
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "dryWet", 1 }, "Dry/Wet",
@@ -201,6 +206,7 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     SpectralEngine::Params p;
     p.feed       = pFeed->load();
     p.loss       = pLoss->load();
+    p.ewLocation = pEwLocation->load();
     p.phaseNoise = pPhaseNoise->load() > 0.5f;
     p.harmonize  = pHarmonize->load();
     p.harmWidth  = pHarmWidth->load();

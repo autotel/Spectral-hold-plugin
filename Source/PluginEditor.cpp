@@ -9,6 +9,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     // persistent row
     setupKnob (feed,       "feed",       "Feed");
     setupKnob (loss,       "loss",       "Loss");
+    setupKnob (ewLocation, "ewLocation", "E<->W");
     setupKnob (dryWet,     "dryWet",     "Dry/Wet");
     setupKnob (output,     "output",     "Output");
 
@@ -95,6 +96,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
 
     setInfo (feed.slider,       "How much live input is injected into the held spectrum each hop.");
     setInfo (loss.slider,       "How fast held tones decay. 0 = hold forever.");
+    setInfo (ewLocation.slider, "Position along the East-West field: records held tones here, and blends between deposited locations. Set Feed to 0 to audition without overwriting.");
     setInfo (dryWet.slider,     "Balance of untouched input vs the spectral hold output.");
     setInfo (output.slider,     "Output level, before the safety limiter.");
     setInfo (shapeAmt.slider,   "Shaper depth: scales the whole curve.");
@@ -211,8 +213,8 @@ void SpectralHoldEditor::resized()
 
     // persistent row: the performance knobs, always visible
     auto row1 = controls.removeFromTop ((controls.getHeight() - 28) / 2);
-    Knob* row1Knobs[] = { &feed, &loss, &dryWet, &output };
-    layoutRow (row1, row1Knobs, 4);
+    Knob* row1Knobs[] = { &feed, &loss, &ewLocation, &dryWet, &output };
+    layoutRow (row1, row1Knobs, 5);
 
     // tab strip
     auto tabs = controls.removeFromTop (28).reduced (0, 2);

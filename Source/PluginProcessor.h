@@ -80,6 +80,7 @@ private:
     // cached param pointers
     std::atomic<float>* pFeed   = nullptr;
     std::atomic<float>* pLoss   = nullptr;
+    std::atomic<float>* pEwLocation = nullptr;
     std::atomic<float>* pDryWet = nullptr;
     std::atomic<float>* pOutput = nullptr;
     std::atomic<float>* pPhaseNoise = nullptr;
