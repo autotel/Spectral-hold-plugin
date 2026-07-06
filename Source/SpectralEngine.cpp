@@ -22,6 +22,12 @@ namespace
                                          // (so leakage isn't mistaken for a tone) but low
                                          // enough to include fairly quiet tones in harmonizing.
     constexpr int   kMaxDen    = 6;      // largest harmonic ratio denominator/numerator
+    // East<->West location blend (agent-wiki/plan-eastwest.md §2)
+    constexpr float kLocP      = 2.0f;   // inverse-distance exponent (higher = crisper crossfade)
+    constexpr float kLocEps    = 1.0e-4f;// avoids div-by-zero at L == slot position
+    constexpr float kPresLo    = 0.02f;  // presence smoothstep floor (fraction of loudest slot)
+    constexpr float kPresHi    = 0.15f;  // presence smoothstep ceiling
+    constexpr float kSlotFloor = 1.0e-9f;// energy below this -> slot considered silent/empty
 }
 
 void SpectralEngine::prepare (double sr, int maxFftOrder)
@@ -45,16 +51,31 @@ void SpectralEngine::prepare (double sr, int maxFftOrder)
     inRing.assign  ((size_t) maxFftSize, 0.0f);
     outRing.assign ((size_t) maxFftSize, 0.0f);
     window.assign  ((size_t) maxFftSize, 0.0f);
-    S.assign   ((size_t) (maxFftSize / 2 + 1), {});
-    Xs.assign  ((size_t) (maxFftSize / 2 + 1), {});
-    expectedAdv.assign ((size_t) (maxFftSize / 2 + 1), 0.0f);
-    omega.assign       ((size_t) (maxFftSize / 2 + 1), 0.0f);
-    prevPhase.assign   ((size_t) (maxFftSize / 2 + 1), 0.0f);
-    dispMag.assign   ((size_t) (maxFftSize / 2 + 1), 0.0f);
-    dispPhase.assign ((size_t) (maxFftSize / 2 + 1), 0.0f);
+
+    // Per-slot spectral stores: kNumSlots regions, stride maxBins (= maxFftSize/2+1) so the
+    // layout is independent of the current FFT size.
+    const size_t maxBins = (size_t) (maxFftSize / 2 + 1);
+    slotS.assign         ((size_t) kNumSlots * maxBins, {});
+    slotOmega.assign     ((size_t) kNumSlots * maxBins, 0.0f);
+    slotPrevPhase.assign ((size_t) kNumSlots * maxBins, 0.0f);
+    Xs.assign  (maxBins, {});
+    expectedAdv.assign (maxBins, 0.0f);
+    gOutScratch.assign (maxBins, 1.0f);
+    dispMag.assign   (maxBins, 0.0f);
+    dispPhase.assign (maxBins, 0.0f);
+    useSlot (0);
 
     configure (maxFftOrder); // default to max; processor overrides via setOrder()
     reset();
+}
+
+void SpectralEngine::useSlot (int s)
+{
+    const size_t stride = (size_t) (maxFftSize / 2 + 1); // max numBins
+    const size_t off = (size_t) s * stride;
+    S         = slotS.data()         + off;
+    omega     = slotOmega.data()     + off;
+    prevPhase = slotPrevPhase.data() + off;
 }
 
 void SpectralEngine::configure (int fftOrder)
@@ -104,10 +125,16 @@ void SpectralEngine::reset()
 {
     std::fill (inRing.begin(),  inRing.end(),  0.0f);
     std::fill (outRing.begin(), outRing.end(), 0.0f);
-    std::fill (S.begin(),  S.end(),  std::complex<float> {});
     std::fill (Xs.begin(), Xs.end(), std::complex<float> {});
-    std::fill (prevPhase.begin(), prevPhase.end(), 0.0f);
-    omega = expectedAdv; // start at bin centre until the input is measured
+    std::fill (slotS.begin(), slotS.end(), std::complex<float> {});
+    std::fill (slotPrevPhase.begin(), slotPrevPhase.end(), 0.0f);
+    // every slot's omega starts at bin centre until its input is measured
+    const size_t stride = (size_t) (maxFftSize / 2 + 1);
+    for (int s = 0; s < kNumSlots; ++s)
+        for (int k = 0; k < numBins; ++k)
+            slotOmega[(size_t) s * stride + (size_t) k] = expectedAdv[(size_t) k];
+    slotEnergy.fill (0.0f);
+    slotOcc.fill (false);
     inWrite = outRead = hopCount = 0;
 }
 
@@ -145,26 +172,37 @@ void SpectralEngine::processFrame (const Params& p)
         fftData[(size_t) i] = s * window[(size_t) i];
     }
     fft->performRealOnlyForwardTransform (fftData.data());
+    // fftData now holds the input spectrum X; it is read (per bin) by the active slot's
+    // injection and only overwritten with the blended output at the end of the frame.
 
-    drainBrush(); // apply any pending GUI edits to the held spectrum
+    // Active location slot = nearest grid slot to the knob. Input, freq tracking and all
+    // permanent edits target this slot; the output is a location blend of every occupied
+    // slot (agent-wiki/plan-eastwest.md).
+    const int active = juce::jlimit (0, kNumSlots - 1,
+                                     (int) std::lround (p.ewLocation * (float) (kNumSlots - 1)));
 
-    // --- harmonize: tones pull on each other's pitch (coupled oscillators). A state
-    // edit like drainBrush (rewrites S/omega/prevPhase, may migrate energy across
-    // bins), so it runs BEFORE the shaper precompute -- the Level-shape mean must be
-    // computed on the post-migration spectrum.
-    applyHarmonize (p);
+    // --- per-hop scalars (shared across slots)
+    const float lossDecay = std::exp (-p.loss * (float) hopSize / (float) sampleRate * 6.0f);
+    const float injScale  = juce::jmax (kInjFloor, 1.0f - lossDecay);
+    const float feed      = p.feed * injScale;
+    const float trackW    = p.feed;
+    const float decay     = juce::jmax (kDecayFloor, lossDecay);
+    const float refFreq   = (float) sampleRate / (float) fftSize;
+    const float twoPi     = juce::MathConstants<float>::twoPi;
+    constexpr float kTrackThresh = 1.0e-3f;
 
-    // --- shaper: per-bin signed change L[k] in [-1..+1] from a cross-faded math curve
-    // (ShapeCurves.h), applied as a permanent multiply on S (compounding, replaces
-    // Compress) and/or a momentary output gain (non-destructive, replaces Filter),
-    // cross-faded by shapeMode. The Level shape needs the pivot mean of the *active*
-    // bins (as Compress did); the other shapes are purely positional and ignore it.
+    // ================= Phase A: the active slot (input + sculpt + advance) =============
+    useSlot (active);
+    slotOcc[(size_t) active] = true;
+
+    drainBrush();       // pending GUI brush edits -> active slot (edit where you point)
+    applyHarmonize (p); // coupled-oscillator pitch drift -> active slot
+
+    // shaper pivot mean, from the active slot's spectrum (legacy behaviour when parked)
     const bool shaperActive = p.shapeAmt > 1.0e-4f && std::abs (p.shapeLevel) > 1.0e-4f;
     float shapeMean = 0.0f, activeThresh = 0.0f;
     if (shaperActive)
     {
-        // pivot = mean level of the *active* bins (ignore the empty noise floor, else the
-        // pivot collapses to ~0 and every real tone saturates the same way).
         float maxMag = 0.0f;
         for (int k = 1; k < numBins; ++k) maxMag = juce::jmax (maxMag, std::abs (S[(size_t) k]));
         activeThresh = maxMag * 1.0e-3f;
@@ -179,29 +217,10 @@ void SpectralEngine::processFrame (const Params& p)
     const float invShapeMean = 1.0f / juce::jmax (1.0e-9f, shapeMean);
     const float shapeX0 = std::log2 (juce::jmax (20.0f, p.shapeFreq));
 
-    // --- per-hop scalars
-    // loss -> decay multiplier per hop. loss=0 -> 1 (eternal), loss=1 -> fast.
-    const float lossDecay = std::exp (-p.loss * (float) hopSize / (float) sampleRate * 6.0f);
-    // Injection scale: with the (now phase-coherent) feedback loop, feeding integrates.
-    // Scaling by (1-lossDecay) makes the steady-state held level ~= feed * input level
-    // instead of building up by 1/(1-lossDecay). Floored so capture still works at loss=0.
-    const float injScale = juce::jmax (kInjFloor, 1.0f - lossDecay);
-    const float feed    = p.feed * injScale;
-    const float trackW  = p.feed; // input's influence on the held *frequency* follows Feed,
-                                  // so feed=0 fully freezes (no input phase leak)
-
-    const float refFreq   = (float) sampleRate / (float) fftSize; // freq of bin 1
-    const float twoPi     = juce::MathConstants<float>::twoPi;
-    constexpr float kTrackThresh = 1.0e-3f; // only re-estimate freq where input has energy
-
-    // --- spectral update
+    double activeEnergy = 0.0;
     for (int k = 0; k < numBins; ++k)
     {
-        const float binFreq = (float) k * refFreq;
-
-        // --- shaper: L[k] in [-1..+1]. ratio=1 makes the Level-shape component a
-        // no-op (used for bin 0 and inactive/noise-floor bins, mirroring the old
-        // Compress leaving them untouched).
+        // shaper L[k] in [-1..+1] (Level shape uses the active slot's ratio)
         float L = 0.0f;
         if (shaperActive && k > 0)
         {
@@ -212,69 +231,130 @@ void SpectralEngine::processFrame (const Params& p)
                 if (a > activeThresh)
                     ratio = juce::jlimit (0.01f, 100.0f, a * invShapeMean);
             }
-            const float x0 = std::log2 (juce::jmax (20.0f, binFreq));
+            const float x0 = std::log2 (juce::jmax (20.0f, (float) k * refFreq));
             L = juce::jlimit (-1.0f, 1.0f,
                     ShapeCurves::shapeL (p.shape, x0, shapeX0, p.shapeWidth, p.shapeCount,
                                         p.shapeLevel, ratio)) * p.shapeAmt;
         }
-
         const bool hasL = std::abs (L) > 1.0e-9f;
 
-        // permanent: gently reshape the held state itself (compounds over frames, like
-        // the old Compress/brush).
+        // permanent shaper: reshape the active slot's held state (compounds over frames)
         if (hasL && p.shapeMode > 1.0e-4f)
             S[(size_t) k] *= std::exp (L * p.shapeMode * kPermScale);
 
-        // momentary: non-destructive output gain (replaces the old filter). Only cuts
-        // are compensated at injection, so live input isn't attenuated by boosts.
+        // momentary shaper: output gain, stored for the blend (applied post-mix, §Phase C)
         float gOut = 1.0f;
         if (hasL && p.shapeMode < 0.9999f)
         {
             const float tm = L * (1.0f - p.shapeMode);
             gOut = (tm >= 0.0f) ? std::exp (tm * kLn4)
-                                 : (1.0f + tm) * (1.0f + tm); // smooth to 0 at tm = -1
+                                 : (1.0f + tm) * (1.0f + tm);
         }
-        const float comp  = 1.0f / juce::jmax (kCompFloor, juce::jmin (1.0f, gOut));
-        const float decay = juce::jmax (kDecayFloor, lossDecay); // loss only
+        gOutScratch[(size_t) k] = gOut;
+        const float comp = 1.0f / juce::jmax (kCompFloor, juce::jmin (1.0f, gOut));
 
         std::complex<float> x { fftData[(size_t) (2 * k)], fftData[(size_t) (2 * k + 1)] };
 
-        // --- instantaneous-frequency tracking: measure the true per-hop phase advance
-        // of the input and hold the partial at *that* rate, so leakage bins stay phase
-        // coherent and the freeze is a smooth continuous tone (not a bin-centre grain).
-        const float phi  = std::arg (x);
+        // instantaneous-frequency tracking (input retunes only the slot it feeds)
+        const float phi = std::arg (x);
         if (trackW > 1.0e-4f && std::abs (x) > kTrackThresh)
         {
             float dev = (phi - prevPhase[(size_t) k]) - expectedAdv[(size_t) k];
-            dev -= twoPi * std::round (dev / twoPi);              // wrap to [-pi, pi]
-            const float measured = expectedAdv[(size_t) k] + dev; // input's true advance/hop
-            // Feed controls how strongly the input retunes the held tone (1 = snap, smooth).
+            dev -= twoPi * std::round (dev / twoPi);
+            const float measured = expectedAdv[(size_t) k] + dev;
             omega[(size_t) k] += (measured - omega[(size_t) k]) * trackW;
         }
-        prevPhase[(size_t) k] = phi; // always tracked (bookkeeping; does not reach audio)
+        prevPhase[(size_t) k] = phi;
+        Xs[(size_t) k] = x;
 
-        std::complex<float>& xs = Xs[(size_t) k];
-        xs = x; // attack was removed; input is fed in unsmoothed
-
-        // free-run phasor at the tracked frequency (+ optional phase noise injected into
-        // the frequency tracking), inject compensated input, decay (loss). The noise is
-        // per-frame and non-accumulating, so it shimmers rather than detuning permanently.
+        // free-run + inject + decay
         float w = omega[(size_t) k];
         if (p.phaseNoise)
             w += (rng.nextFloat() * 2.0f - 1.0f) * kPhaseNoise;
         std::complex<float> sk = S[(size_t) k] * std::polar (1.0f, w);
-        sk += feed * xs * comp;
+        sk += feed * x * comp;
         sk *= decay;
         S[(size_t) k] = sk;
+        activeEnergy += (double) std::norm (sk);
+    }
+    slotEnergy[(size_t) active] = (float) activeEnergy;
+    // keep the active slot alive while feeding even if momentarily near-silent
+    slotOcc[(size_t) active] = (activeEnergy > (double) kSlotFloor) || (p.feed > 1.0e-4f);
 
-        // output is the held state shaped by the momentary gain (non-destructive)
-        const std::complex<float> outBin = sk * gOut;
+    // ============ Phase A2: every other occupied slot free-runs (no input) ============
+    for (int s = 0; s < kNumSlots; ++s)
+    {
+        if (s == active || ! slotOcc[(size_t) s]) continue;
+        useSlot (s);
+        double e = 0.0;
+        for (int k = 0; k < numBins; ++k)
+        {
+            float w = omega[(size_t) k];
+            if (p.phaseNoise)
+                w += (rng.nextFloat() * 2.0f - 1.0f) * kPhaseNoise;
+            std::complex<float> sk = S[(size_t) k] * std::polar (1.0f, w);
+            sk *= decay;
+            S[(size_t) k] = sk;
+            e += (double) std::norm (sk);
+        }
+        slotEnergy[(size_t) s] = (float) e;
+        if (e < (double) kSlotFloor)   // decayed to silence: drop it (and zero to avoid drift)
+        {
+            slotOcc[(size_t) s] = false;
+            for (int k = 0; k < numBins; ++k) S[(size_t) k] = std::complex<float> {};
+        }
+    }
+
+    // ============ Phase B: presence-weighted location gains Aₛ(L) =====================
+    // pₛ = smoothstep(level) so an emptying slot smoothly stops anchoring and its
+    // neighbours bridge the gap; Aₛ = pₛ·φ(L−Lₛ)/Σ, φ = inverse distance (plan §2).
+    std::array<float, kNumSlots> A { };
+    {
+        float levelMax = 0.0f;
+        std::array<float, kNumSlots> level { };
+        for (int s = 0; s < kNumSlots; ++s)
+        {
+            level[(size_t) s] = slotOcc[(size_t) s] ? std::sqrt (slotEnergy[(size_t) s]) : 0.0f;
+            levelMax = juce::jmax (levelMax, level[(size_t) s]);
+        }
+        if (levelMax > 1.0e-12f)
+        {
+            const float lo = kPresLo * levelMax, hi = kPresHi * levelMax;
+            const float invRange = 1.0f / juce::jmax (1.0e-12f, hi - lo);
+            const float L = p.ewLocation;
+            float sumRaw = 0.0f;
+            for (int s = 0; s < kNumSlots; ++s)
+            {
+                if (! slotOcc[(size_t) s]) continue;
+                float t = juce::jlimit (0.0f, 1.0f, (level[(size_t) s] - lo) * invRange);
+                const float pres = t * t * (3.0f - 2.0f * t); // smoothstep
+                const float d = std::abs (L - (float) s / (float) (kNumSlots - 1));
+                const float raw = pres / (std::pow (d, kLocP) + kLocEps);
+                A[(size_t) s] = raw;
+                sumRaw += raw;
+            }
+            if (sumRaw > 1.0e-12f)
+                for (int s = 0; s < kNumSlots; ++s) A[(size_t) s] /= sumRaw;
+            else
+                A.fill (0.0f);
+        }
+    }
+
+    // ============ Phase C: blend the slots, apply momentary shaper, output =============
+    const size_t stride = (size_t) (maxFftSize / 2 + 1);
+    for (int k = 0; k < numBins; ++k)
+    {
+        std::complex<float> blended { };
+        for (int s = 0; s < kNumSlots; ++s)
+            if (A[(size_t) s] != 0.0f)
+                blended += A[(size_t) s] * slotS[(size_t) s * stride + (size_t) k];
+
+        const std::complex<float> outBin = blended * gOutScratch[(size_t) k];
         fftData[(size_t) (2 * k)]     = outBin.real();
         fftData[(size_t) (2 * k + 1)] = outBin.imag();
-
-        // snapshot the *output* spectrum so the display matches what is heard
         dispScratch[(size_t) k] = outBin;
     }
+    useSlot (active); // leave the pointers on the active slot for copyPeaks / next frame
 
     // --- snapshot for the GUI (try-lock; skip if the editor is reading)
     if (const juce::ScopedTryLock stl (displayLock); stl.isLocked())

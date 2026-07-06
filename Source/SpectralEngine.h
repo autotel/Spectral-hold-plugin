@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_dsp/juce_dsp.h>
 #include <vector>
+#include <array>
 #include <complex>
 
 // One independent spectral-hold STFT engine. One instance per audio channel.
@@ -33,7 +34,15 @@ public:
         float harmonize  = 0.0f;    // 0..1  entrainment: tones drift to amplitude-weighted mean
         float harmWidth  = 0.5f;    // octaves, sigma of the nearness-influence curve
         float harmonic   = 0.0f;    // 0..1  attraction toward low-denominator harmonic ratios
+
+        // East<->West location field (see agent-wiki/plan-eastwest.md). The held sound is
+        // held across kNumSlots location slots; ewLocation picks where input is deposited
+        // (the nearest slot) and the position the output blend peaks at.
+        float ewLocation = 0.5f;    // 0 = East, 1 = West
     };
+
+    // Number of location slots along the E<->W axis (2-D held field: [frequency, location]).
+    static constexpr int kNumSlots = 16;
 
     void prepare (double sampleRate, int maxFftOrder);
     // Reconfigure to a new FFT size (order = log2(size)). Must be <= maxFftOrder.
@@ -71,6 +80,10 @@ private:
     void processFrame (const Params& p);
     void drainBrush();
     void applyHarmonize (const Params& p);
+    // Point S/omega/prevPhase at location slot s's region of the flat stores. All the
+    // per-bin code (processFrame, drainBrush, applyHarmonize) operates on "the current
+    // slot" through these pointers; blend/injection routing selects which slot is current.
+    void useSlot (int s);
 
     double sampleRate = 44100.0;
     int maxFftSize = 0, maxOrder = 0;
@@ -86,13 +99,24 @@ private:
     std::vector<float> inRing, outRing;
     int inWrite = 0, outRead = 0, hopCount = 0;
 
-    // spectral state
-    std::vector<std::complex<float>> S;   // held phasors
-    std::vector<std::complex<float>> Xs;  // per-hop input spectrum (fed into S)
+    // spectral state, held PER LOCATION SLOT. The three stores are flat, stride maxFftSize/2+1
+    // (= max numBins) per slot so the layout is independent of the current FFT size. S/omega/
+    // prevPhase are pointers into the current slot (set by useSlot); all the per-bin math
+    // dereferences them unchanged.
+    std::vector<std::complex<float>> slotS;
+    std::vector<float> slotOmega, slotPrevPhase;
+    std::complex<float>* S = nullptr;     // held phasors      (current slot)
+    float* omega = nullptr;               // per-hop advance   (current slot)
+    float* prevPhase = nullptr;           // last input phase  (current slot)
+
+    // per-slot bookkeeping for the location blend
+    std::array<float, kNumSlots> slotEnergy { }; // Sum|S|^2, refreshed each frame for occupied
+    std::array<bool,  kNumSlots> slotOcc    { }; // occupied (has audible energy) -> updated/blended
+
+    std::vector<std::complex<float>> Xs;  // per-hop input spectrum (fed into the active slot)
     // Instantaneous-frequency phase tracking (smooth freeze, not bin-centre):
     std::vector<float> expectedAdv;       // 2*pi*k*hop/N, the bin-centre advance per hop
-    std::vector<float> omega;             // measured per-hop phase advance per bin (rad)
-    std::vector<float> prevPhase;         // last input phase per bin, for unwrapping
+    std::vector<float> gOutScratch;       // per-bin momentary shaper gain, applied to the blend
     juce::Random rng;                     // phase-noise source (audio thread only)
 
     // harmonize peak scratch (preallocated; capped at kMaxPeaks)
