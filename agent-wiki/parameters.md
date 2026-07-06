@@ -4,7 +4,8 @@ DAW-facing parameters are defined in `SpectralHoldProcessor::createLayout()`.
 The engine consumes them via `SpectralEngine::Params`. FFT size is separate (GUI-only).
 
 Knob order in the editor: **row 1** Feed, Loss, Output; **row 2** Amount, Mode, Shape,
-Freq, Width, Count, Level (the spectral **shaper** — see below).
+Freq, Width, Count, Level (the spectral **shaper** — see below); **row 3** Mix, Decay,
+Size, Damp, Predelay (the output **reverb** — see below).
 
 | GUI / id            | Range          | Default | Meaning / mapping |
 |---------------------|----------------|---------|-------------------|
@@ -19,6 +20,11 @@ Freq, Width, Count, Level (the spectral **shaper** — see below).
 | Count `shapeCount`  | 0 .. 1         | 1.0     | Extent/repetition; meaning per shape. |
 | Level `shapeLevel`  | -1 .. +1       | 0.0     | Signed strength. **0 = no effect for every shape** (global bypass). |
 | Phase Noise `phaseNoise` | bool      | off     | When on, injects ±`kPhaseNoise` rad of per-frame random jitter into each bin's phase advance (shimmer/roughness). Non-accumulating — does not permanently detune. |
+| Mix `revMix`         | 0 .. 1         | 0.0     | Output reverb wet/dry, equal-power. 0 = bit-exact dry (hard bypass, see gotchas.md). |
+| Decay `revDecay`     | 0 .. 1         | 0.5     | Tank feedback / tail length. |
+| Size `revSize`       | 0.5 .. 2.0     | 1.0     | Scales the tank delay lengths (room size). Moving it live gently pitch-bends the tail (by design). |
+| Damp `revDamp`       | 0 .. 1         | 0.3     | One-pole damping inside the tank: 0 = bright, 1 = dark. |
+| Predelay `revPredelay` | 0 .. 250 ms  | 20      | Delay before the reverb's input diffusers. |
 | FT Size (GUI only)  | 1024 .. 8192   | 4096    | FFT size. `ComboBox`, powers of two. Not a DAW parameter. |
 | Live / 0 PDC (GUI only) | bool       | off     | Reports **0 latency** to the host (no plugin delay compensation) for live use. The real STFT latency is unchanged; the host just stops delay-compensating. |
 | Save sound (GUI only)   | bool       | off     | When on, the saved preset **includes the held spectral state** (per-engine S/omega/phase/Xs), so reloading restores the ongoing frozen sound. |
@@ -40,6 +46,14 @@ Freq/Width/Count take on a different meaning:
 | **Spikes** (2) | pattern centre | spike spacing | 1 spike → covers whole spectrum | subtractive band-select: >0 = **reject** peaks (notch), <0 = pass **only** peaks (cut the rest), flat at 0 |
 | **Harmonics** (3) | fundamental | spike width | 0 = fundamental only → 12 overtone/undertone pairs/side | subtractive band-select, same sign convention as Spikes: >0 = **reject** the harmonic series, <0 = pass **only** the series (isolate tones related to Freq), flat at 0 |
 | **Sine** (4) | pattern centre (phase) | cycles/octave | 1 lobe → repeats across spectrum | -1..+1, sign flips cut/boost |
+
+## The output reverb
+
+A stereo plate reverb (Dattorro topology, JAES 1997) applied **after** the Output gain and
+**before** the limiter, so its wet tail still gets peak-protected. `Source/PlateReverb.h`
+is host-free (`juce_dsp` only, no plugin deps) — see [plan-reverb.md](plan-reverb.md) for
+the full topology/constants and [gotchas.md](gotchas.md) for the hard-bypass and
+size-knob-pitch-bend behavior.
 
 ## Notes
 - **Spectral brush** (not a DAW parameter): drag on the display to permanently boost/cut the

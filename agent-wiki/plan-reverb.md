@@ -1,9 +1,9 @@
 # PLAN — Output Reverb (branch `exp/reverb`)
 
-**Status: NOT implemented — this is the plan.** Implement on a new branch `exp/reverb`
-created from `exp/spectral-shaper` (the current work line; the reverb sits after the
-shaper's output stage). When done, flip this banner, update the wiki pages listed in §8,
-and make sure `./build.sh` is green.
+**Status: implemented** on branch `exp/reverb` (off `exp/spectral-shaper`) — `PlateReverb.{h,cpp}`,
+processor wiring, editor row 3, tests 2-7 in `test_main.cpp`, wiki updated. `./build.sh`
+green, all tests pass. Kept as design-rationale reference — current behavior is documented
+in [parameters.md](parameters.md) / [architecture.md](architecture.md) / [gotchas.md](gotchas.md).
 
 ## 1. What the feature is
 

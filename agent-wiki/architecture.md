@@ -2,23 +2,30 @@
 
 ## Files (`Source/`)
 - `PluginProcessor.{h,cpp}` — `AudioProcessor`. Owns the APVTS, the two `SpectralEngine`s
-  (one per channel), the GUI-only FFT-size value, and the linked limiter. `processBlock`
-  reads params → runs each channel engine in place → applies the limiter.
+  (one per channel), the GUI-only FFT-size value, the output `PlateReverb`, and the linked
+  limiter. `processBlock` reads params → runs each channel engine in place → output gain →
+  reverb (mono-summed, wet/dry mixed back in) → limiter.
 - `SpectralEngine.{h,cpp}` — the DSP core. Self-contained STFT spectral-hold engine.
   Depends only on `juce_dsp`, so it builds and is tested without a plugin host.
-- `PluginEditor.{h,cpp}` — `AudioProcessorEditor`. 5 rotary knobs (APVTS attachments),
-  the FFT-size `ComboBox`, and the spectrum display.
+- `PlateReverb.{h,cpp}` — the output reverb (Dattorro plate topology). Same host-free
+  contract as `SpectralEngine` (`juce_dsp` only, unit-testable). Cross-channel like the
+  limiter — lives in the processor, not per-engine. See
+  [plan-reverb.md](plan-reverb.md) for the full design.
+- `PluginEditor.{h,cpp}` — `AudioProcessorEditor`. Rotary knobs (APVTS attachments) in
+  three rows, the FFT-size `ComboBox`, and the spectrum display.
 - `SpectrumDisplay.{h,cpp}` — the custom "lighting" spectrum view (its own 30 Hz timer).
 - `test_main.cpp` — offline smoke-test (`SpectralHoldTest` target).
 
 ## Signal flow
 ```
 input ──> [engine L] ──┐
-input ──> [engine R] ──┤──> linked slow limiter ──> output
-                       (per-channel spectral hold)   (cross-channel gain)
+input ──> [engine R] ──┤──> output gain ──> plate reverb ──> linked slow limiter ──> output
+                       (per-channel spectral hold)  (mono-sum in,      (cross-channel gain)
+                                                      wet/dry stereo out)
 ```
 Each engine: sliding ring buffers → per-hop STFT frame → held-phasor update → IFFT →
-overlap-add. See [dsp-design.md](dsp-design.md).
+overlap-add. See [dsp-design.md](dsp-design.md). The reverb is a hard bypass at
+`revMix = 0` (see [gotchas.md](gotchas.md)).
 
 ## Threading model
 - **Audio thread:** `processBlock` → engines → limiter. No allocations (buffers

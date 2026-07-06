@@ -82,4 +82,22 @@ Read this before "fixing" something that looks wrong — it probably isn't.
 ## Build
 - LTO on → slow links. Not a hang.
 - `SpectralHoldTest` links only `juce_dsp` — keep `SpectralEngine` free of
-  `juce_audio_processors`/GUI deps or the test stops building.
+  `juce_audio_processors`/GUI deps or the test stops building. `PlateReverb` follows the
+  same rule (`juce_dsp` only) so it's unit-testable without a host.
+
+## Output reverb (`PlateReverb`, branch `exp/reverb`)
+- **`revMix = 0` is a hard bypass**, not just "wet gain zero" — the processor skips calling
+  `reverb.process` entirely so old sessions/presets stay bit-exact dry. It also calls
+  `reverb.reset()` on the 1→0 transition so a stale tail can't reappear next time mix goes up.
+- **Size knob pitch-bends by design.** `revSize` scales the tank delay lengths via a
+  smoothed fractional read; moving it while a tail is ringing produces a gentle tape-style
+  pitch shift. That's expected, not a fractional-delay bug — see plan-reverb.md §3.
+- **Mono in, stereo out.** The processor sums L+R (post output-gain, pre-limiter) before
+  calling `PlateReverb::process`; the tank's own topology produces the decorrelated stereo
+  pair. It never reads the two channels independently.
+- **Two detuned LFOs (0.50/0.61 Hz) modulate the tank's two "modulated allpass" read
+  positions.** This is *the* thing standing between a smooth diffuse tail and a metallic
+  "boingy pipe" — if the reverb starts sounding metallic, check these weren't dropped or
+  set to the same rate before touching anything else.
+- Reverb lives in `PluginProcessor` (cross-channel, mono-summed), not per-engine — same
+  category as the limiter.
