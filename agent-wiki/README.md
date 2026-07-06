@@ -32,6 +32,10 @@ held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, 
 - [plan-integration.md](plan-integration.md) — plan for `exp/integration`: merge harmonize
   into shaper+reverb, param pages of 8, tabbed GUI, per-module integration knobs, info bar.
   Includes the merge-conflict resolution map.
+- [plan-eastwest.md](plan-eastwest.md) — plan (NOT yet implemented) for the **East↔West
+  location knob** (`exp/eastwest`): the held sound becomes a 2-D `[frequency, location]`
+  field of 16 slots blended by a presence-weighted location gain. DSP model, engine
+  restructure, tests.
 
 ## Fast facts
 - JUCE lives at `../JUCE` (sibling of repo root), used via `add_subdirectory`. Modern
