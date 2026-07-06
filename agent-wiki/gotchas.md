@@ -107,6 +107,23 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   the worst case degenerates to the documented eternal-hold linear growth, and the
   limiter caps the output. Don't remove it, and don't "fix" it with a hidden compressor.
 
+## East–West location field (exp/eastwest)
+- **The held state is 16 location slots, not one spectrum.** `S`/`omega`/`prevPhase` are
+  pointers into per-slot flat stores; `useSlot(s)` selects the current one. If you add code
+  that touches held state, decide which slot(s) it hits — permanent edits target the
+  **active** slot (nearest to `ewLocation`); output is a blend of all occupied slots.
+- **The blend is presence-weighted, not binary occupancy.** Don't "simplify" it to
+  on/off — that reintroduces the silent gap and the pop when a slot empties. The presence
+  smoothstep (`kPresLo`/`kPresHi`) is what lets neighbours bridge a fading slot.
+- **Injection is nearest-slot** (round `ewLocation·15`), deliberately not split across two
+  slots: splitting halved the level in the crossfade. So a deposit "between" grid points
+  lands on the nearer one (inaudible quantisation at 16 slots).
+- **One knob records and plays.** With Feed > 0 you paint into the slot at the knob; to
+  audition locations without overwriting, set Feed = 0. This dual role is by design.
+- **`Save sound` was removed** here — the held state is no longer serialised (it would have
+  meant persisting 16 buffers). If you see references to `writeAudioState`/`audioState`,
+  they're gone.
+
 ## Integration decisions (exp/integration)
 - **Harmonize has no momentary/permanent mode knob on purpose.** It must rewrite `omega`
   for tones to converge over time; a momentary variant is just a static detune. Feed > 0

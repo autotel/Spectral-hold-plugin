@@ -149,6 +149,32 @@ Linked across channels so the stereo image is preserved.
 - `limGain` eases toward `target` (fast when reducing, slow when recovering) and multiplies
   every channel. Result: transparent under -1..1, gentle slow pull-down above it.
 
+## East–West location field (2-D held state)
+The held sound is not one spectrum but **`kNumSlots = 16` location slots**, each a full
+spectral state (`S`/`omega`/`prevPhase`, held in flat per-slot stores; `useSlot(s)` points
+the working pointers at slot `s`). The `ewLocation` knob (0 = East, 1 = West) drives both
+recording and playback. `processFrame` runs in three phases:
+
+1. **Active slot** = nearest grid slot to the knob (`round(ewLocation·15)`). Only this slot
+   receives injected input, frequency tracking, and all **permanent** edits (permanent
+   shaper, harmonize, brush) — "edit where you point." Its momentary-shaper gain is stored
+   per bin for phase 3.
+2. **Every other occupied slot** free-runs (phasor advance + loss decay only, no input), so
+   deposited tones stay continuous while inaudible.
+3. **Blend**: each occupied slot gets a location gain
+   `Aₛ = pₛ·φ(L−Lₛ) / Σ`, where `φ(d) = 1/(dᵏ + ε)` (`kLocP=2`) is inverse-distance and
+   `pₛ = smoothstep(kPresLo·max, kPresHi·max, levelₛ)` is a **presence** that fades a slot
+   out as its level drops. The output spectrum is `Σₛ Aₛ·Sₛ`, then the momentary shaper gain
+   is applied, then one IFFT. Presence-weighting is what makes an emptying slot smoothly
+   stop anchoring so its neighbours bridge the gap (no silent hole, no pop); a lone slot has
+   `A=1` everywhere (holds full — "only East → no fade moving West").
+
+Injection is **nearest-slot** (not split across two), which keeps the crossfade
+constant-level. `levelₛ = √Σ|Sₛ|²` is accumulated during each slot's update; a non-active
+slot whose energy falls below `kSlotFloor` is dropped (and zeroed). Cost: one IFFT per hop;
+the per-bin update and blend scale with the number of *occupied* slots (≤16). Full design
+rationale in [plan-eastwest.md](plan-eastwest.md).
+
 ## Reconfiguring FFT size at runtime
 `setOrder()` is called from the message thread; it only stores `pendingOrder`. The audio
 thread applies it in `applyPendingOrder()` **at a frame boundary**, under `displayLock`.
@@ -159,4 +185,6 @@ change (a clean re-freeze), and latency is re-reported.
 ## Constants worth knowing (top of SpectralEngine.cpp)
 `kOverlap=4`, `kCompFloor=0.05`, `kDecayFloor=1e-4`, `kPermScale=0.23` (coupled with the
 `4.6` normaliser in `ShapeCurves.h` — see the shaper section above), `kLn4=ln(4)` (momentary
-boost ceiling, +12 dB). Limiter constants are at the top of `PluginProcessor.cpp`.
+boost ceiling, +12 dB). East–West: `kNumSlots=16`, `kLocP=2` (blend locality), `kLocEps`,
+`kPresLo=0.02`/`kPresHi=0.15` (presence smoothstep floors, fractions of the loudest slot),
+`kSlotFloor` (drop-empty threshold). Limiter constants are at the top of `PluginProcessor.cpp`.

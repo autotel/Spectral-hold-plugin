@@ -1,8 +1,12 @@
 # PLAN — East↔West location knob (`exp/eastwest`)
 
-**Status: NOT implemented — this is the plan.** Branch `exp/eastwest` from
-`exp/integration`. When done, flip this banner, update the wiki pages in §8, and make sure
-`./build.sh` is green with the existing tests plus the new ones.
+**Status: implemented** on `exp/eastwest` (off `exp/integration`). Save sound removed first
+(§7). The engine holds 16 location slots; `processFrame` runs active-slot update → other
+occupied slots free-run → presence-weighted blend. `./build.sh` green, 30/30 tests (5 new
+E–W cases). One realisation note vs the plan: injection is **nearest-slot** (round to the
+grid), not split across two — this keeps the crossfade constant-level (splitting halved it)
+and makes "active slot" a single unambiguous index. Current behaviour is documented in
+[dsp-design.md](dsp-design.md) / [parameters.md](parameters.md) / [gotchas.md](gotchas.md).
 
 Scope is **only** the E–W knob. The other items on the user's fix list (output limiter
 module, reverb "metal" knob, shape-name display, knob renames, *Save sound* removal,

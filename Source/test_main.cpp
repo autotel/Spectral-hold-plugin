@@ -723,6 +723,146 @@ int main()
         fails += okStab ? 0 : 1;
     }
 
+    // ---- East<->West location field (agent-wiki/plan-eastwest.md §8) ----
+
+    auto ewBin = [&] (float hz) { return (int) std::lround ((double) hz * 4096.0 / sr); };
+
+    // deposit a held tone at knob location loc (feed while parked there, loss=0 so it holds).
+    // Flush the STFT input ring with silence first, so a prior deposit's residual in inRing
+    // isn't injected into this slot's first frames (they share one input history).
+    auto ewDeposit = [&] (SpectralEngine& e, float loc, float hz, float amp, double& phase)
+    {
+        std::vector<float> b (block);
+        SpectralEngine::Params z; z.feed = 0.0f; z.loss = 0.0f; z.ewLocation = loc;
+        for (int blk = 0; blk < 20; ++blk) { std::fill (b.begin(), b.end(), 0.0f); e.process (b.data(), b.data(), block, z); }
+
+        SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f; d.ewLocation = loc;
+        const double w = 2.0 * M_PI * (double) hz / sr;
+        for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+        {
+            for (int i = 0; i < block; ++i) { b[(size_t) i] = amp * (float) std::sin (phase); phase += w; }
+            e.process (b.data(), b.data(), block, d);
+        }
+    };
+    // read a bin of the blended output at knob location loc (feed=0, loss=0 -> non-destructive)
+    auto ewMeasure = [&] (SpectralEngine& e, float loc, int bin)
+    {
+        SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.ewLocation = loc;
+        std::vector<float> b (block), m, ph;
+        for (int blk = 0; blk < 24; ++blk) { std::fill (b.begin(), b.end(), 0.0f); e.process (b.data(), b.data(), block, h); }
+        int n = 0; for (int t = 0; t < 8 && n == 0; ++t) { std::fill (b.begin(), b.end(), 0.0f); e.process (b.data(), b.data(), block, h); n = e.copyDisplay (m, ph); }
+        return m[(size_t) bin];
+    };
+
+    // ew1) two deposits crossfade: A at East, B at West; sweeping the knob fades A out and B in
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        double pa = 0.0, pb = 0.0;
+        ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa); // A at East
+        ewDeposit (e, 1.0f, 4000.0f, 0.5f, pb); // B at West
+        const int bA = ewBin (1000.0f), bB = ewBin (4000.0f);
+        float a0 = ewMeasure (e, 0.0f, bA), a5 = ewMeasure (e, 0.5f, bA), a1 = ewMeasure (e, 1.0f, bA);
+        float b0 = ewMeasure (e, 0.0f, bB), b1 = ewMeasure (e, 1.0f, bB);
+        bool ok = std::isfinite (a0) && a0 > a5 && a5 > a1 && a1 < a0 * 0.2f   // A fades E->W
+                  && b1 > b0 && b0 < b1 * 0.2f;                                // B fades in W
+        printf ("[%s] ew crossfade: A(E=%.3f,M=%.3f,W=%.3f) B(E=%.3f,W=%.3f)\n",
+                ok ? "PASS" : "FAIL", a0, a5, a1, b0, b1);
+        fails += ok ? 0 : 1;
+    }
+
+    // ew2) hold-full beyond the extreme: with only East deposited, moving the knob West does
+    // NOT fade it (the sole occupied slot is always the nearest present one).
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        double pa = 0.0;
+        ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
+        const int bA = ewBin (1000.0f);
+        float v0 = ewMeasure (e, 0.0f, bA), v3 = ewMeasure (e, 0.33f, bA);
+        float v6 = ewMeasure (e, 0.66f, bA), v1 = ewMeasure (e, 1.0f, bA);
+        float lo = juce::jmin (juce::jmin (v0, v3), juce::jmin (v6, v1));
+        float hi = juce::jmax (juce::jmax (v0, v3), juce::jmax (v6, v1));
+        bool ok = std::isfinite (hi) && lo > 1.0e-4f && hi < lo * 1.2f; // ~constant across the sweep
+        printf ("[%s] ew hold-full beyond extreme: min=%.3f max=%.3f\n", ok ? "PASS" : "FAIL", lo, hi);
+        fails += ok ? 0 : 1;
+    }
+
+    // ew3) presence-weighted bridge: a LOUD middle deposit blocks the E<->W bridge at 0.5
+    // (it dominates), but a NEGLIGIBLE middle deposit does not -- its presence is ~0 so the
+    // two outer slots still mix in. (Verifies the graded "silent slot extends neighbours".)
+    {
+        const int bA = ewBin (1000.0f), bB = ewBin (4000.0f);
+        auto build = [&] (float midAmp, float& aOut, float& bOut)
+        {
+            SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+            double pa = 0.0, pb = 0.0, pm = 0.0;
+            ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
+            ewDeposit (e, 1.0f, 4000.0f, 0.5f, pb);
+            if (midAmp > 0.0f) ewDeposit (e, 0.5f, 2500.0f, midAmp, pm);
+            aOut = ewMeasure (e, 0.5f, bA);
+            bOut = ewMeasure (e, 0.5f, bB);
+        };
+        float aNo, bNo, aBig, bBig, aTiny, bTiny;
+        build (0.0f,   aNo,   bNo);   // no middle -> A+B bridge
+        build (0.5f,   aBig,  bBig);  // loud middle -> bridge suppressed
+        build (0.002f, aTiny, bTiny); // negligible middle -> bridge preserved
+        bool ok = aBig < aNo * 0.3f && bBig < bNo * 0.3f
+                  && aTiny > aNo * 0.9f && bTiny > bNo * 0.9f;
+        printf ("[%s] ew presence bridge: A(no=%.3f big=%.3f tiny=%.3f) B(no=%.3f big=%.3f tiny=%.3f)\n",
+                ok ? "PASS" : "FAIL", aNo, aBig, aTiny, bNo, bBig, bTiny);
+        fails += ok ? 0 : 1;
+    }
+
+    // ew4) a permanent edit hits only the active slot: cut at East (slot holding A) leaves the
+    // West slot (holding B) untouched.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        double pa = 0.0, pb = 0.0;
+        ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
+        ewDeposit (e, 1.0f, 4000.0f, 0.5f, pb);
+        const int bA = ewBin (1000.0f), bB = ewBin (4000.0f);
+        float aBase = ewMeasure (e, 0.0f, bA), bBase = ewMeasure (e, 1.0f, bB);
+
+        // permanent Sine-as-filter cut at 1 kHz, applied at East (active slot = A's slot)
+        SpectralEngine::Params c; c.feed = 0.0f; c.loss = 0.0f; c.ewLocation = 0.0f;
+        c.shapeAmt = 1.0f; c.shapeMode = 1.0f; c.shape = 4.0f;
+        c.shapeFreq = 1000.0f; c.shapeWidth = 0.35f; c.shapeCount = 0.0f; c.shapeLevel = -1.0f;
+        std::vector<float> b (block);
+        for (int blk = 0; blk < 60; ++blk) { std::fill (b.begin(), b.end(), 0.0f); e.process (b.data(), b.data(), block, c); }
+
+        float aCut = ewMeasure (e, 0.0f, bA), bKept = ewMeasure (e, 1.0f, bB);
+        bool ok = aCut < aBase * 0.4f && bKept > bBase * 0.7f;
+        printf ("[%s] ew permanent edit is per-slot: A base=%.3f cut=%.3f | B base=%.3f kept=%.3f\n",
+                ok ? "PASS" : "FAIL", aBase, aCut, bBase, bKept);
+        fails += ok ? 0 : 1;
+    }
+
+    // ew5) everything-on stability with the knob sweeping (in==out aliasing, house rule):
+    // all effects active, feed noise, sweep the knob across all slots for 30 s -> finite/bounded.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        juce::Random rng (4321);
+        std::vector<float> b (block);
+        bool finite = true; float mx = 0.0f;
+        const int total = (int) (30.0 * sr / block);
+        for (int blk = 0; blk < total; ++blk)
+        {
+            SpectralEngine::Params a;
+            a.feed = 1.0f; a.loss = 0.1f; a.phaseNoise = true;
+            a.ewLocation = 0.5f + 0.5f * std::sin ((float) blk * 0.05f);
+            a.shapeAmt = 1.0f; a.shapeMode = 1.0f; a.shape = 2.5f;
+            a.shapeFreq = 800.0f; a.shapeWidth = 0.6f; a.shapeCount = 0.5f; a.shapeLevel = 0.7f;
+            a.harmonize = 0.05f; a.harmWidth = 1.0f; a.harmonic = 1.0f;
+            for (int i = 0; i < block; ++i) b[(size_t) i] = rng.nextFloat() * 1.6f - 0.8f;
+            e.process (b.data(), b.data(), block, a); // in == out
+            if (! finiteAll (b.data(), block)) { finite = false; break; }
+            for (int i = 0; i < block; ++i) mx = juce::jmax (mx, std::abs (b[(size_t) i]));
+        }
+        bool ok = finite && mx < 50.0f;
+        printf ("[%s] ew everything-on sweep stability: finite=%d maxAbs=%.3f\n",
+                ok ? "PASS" : "FAIL", (int) finite, mx);
+        fails += ok ? 0 : 1;
+    }
+
     printf ("\n%s (%d failure%s)\n", fails == 0 ? "ALL PASS" : "FAILURES",
             fails, fails == 1 ? "" : "s");
     return fails == 0 ? 0 : 1;

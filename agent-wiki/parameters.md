@@ -3,22 +3,23 @@
 DAW-facing parameters are defined in `SpectralHoldProcessor::createLayout()`.
 The engine consumes them via `SpectralEngine::Params`. FFT size is separate (GUI-only).
 
-**Creation order = host page order.** Push/Maschine bank 8 consecutive params per page,
-so `createLayout()` groups them: **page 1 "Hold"** (Feed, Loss, Dry/Wet, Output, Phase
-Noise, Harmonize, Harm Width, Harmonic — exactly 8), **page 2 "Shaper"** (7; `revMix`
-spills into its 8th slot — accepted, see [plan-integration.md](plan-integration.md) §3),
-**page 3 "Reverb"** (the rest).
+**Creation order = host page order.** Push/Maschine bank 8 consecutive params per page, so
+`createLayout()` order is the grouping. `ewLocation` was inserted after Loss, so page 1
+now holds 9 params (Feed, Loss, E↔W, Dry/Wet, Output, Phase Noise, Harmonize, Harm Width,
+Harmonic) — the macro-page re-grouping across all pages is a **later pass** (the user
+deferred it); don't treat the current split as final.
 
 **Editor layout (tabs, not a knob wall):** the display on top; a persistent performance
-row **Feed, Loss, Dry/Wet, Output**; a tab strip **Shaper | Harmonize | Reverb** switching
-one shared knob row; the utility row (Phase Noise, Live, Save sound, Brush, FT Size); and
-an **info bar** at the bottom that shows a one-line description of whatever control the
-mouse is over (Ableton-style).
+row **Feed, Loss, E↔W, Dry/Wet, Output**; a tab strip **Shaper | Harmonize | Reverb**
+switching one shared knob row; the utility row (Phase Noise, Live, Brush, FT Size); and an
+**info bar** at the bottom that shows a one-line description of whatever control the mouse
+is over (Ableton-style).
 
 | GUI / id            | Range          | Default | Meaning / mapping |
 |---------------------|----------------|---------|-------------------|
 | Feed `feed`         | 0 .. 1         | 0.5     | Linear gain on input injected into the running FT each hop. |
 | Loss `loss`         | 0 .. 1         | 0.2     | Decay of held magnitudes. `decay = exp(-loss·hop/sr·6)`. 0 = eternal hold. |
+| E↔W `ewLocation`    | 0 .. 1         | 0.5     | Position in the East(0)–West(1) location field. The held sound spans 16 location slots; the knob picks where input is deposited (nearest slot) and where the output blend peaks. See [dsp-design.md](dsp-design.md) / the E–W notes in gotchas.md. |
 | Dry/Wet `dryWet`    | 0 .. 1         | 1.0     | Global mix: engine output (1) vs untouched input (0). The dry path is delayed by `fftSize` (`DryDelay.h`) so it stays time-aligned with the wet. 1 = bit-exact wet-only (skip). |
 | Output `output`     | 0 .. 2         | 1.0     | Final output level (linear gain), applied **before** the limiter so it still protects ±1. |
 | Phase Noise `phaseNoise` | bool      | off     | When on, injects ±`kPhaseNoise` rad of per-frame random jitter into each bin's phase advance (shimmer/roughness). Non-accumulating — does not permanently detune. |
@@ -40,7 +41,6 @@ mouse is over (Ableton-style).
 | Feed `revFeed`       | 0 .. 1         | 0.0     | The reverb's *integration* knob: last block's wet (clamped ±1, ×0.5) re-injected into the engines' input, so the tail becomes part of the held sound. Active only while `revMix > 0`. |
 | FT Size (GUI only)  | 1024 .. 8192   | 4096    | FFT size. `ComboBox`, powers of two. Not a DAW parameter. |
 | Live / 0 PDC (GUI only) | bool       | off     | Reports **0 latency** to the host (no plugin delay compensation) for live use. The real STFT latency is unchanged; the host just stops delay-compensating. |
-| Save sound (GUI only)   | bool       | off     | When on, the saved preset **includes the held spectral state** (per-engine S/omega/phase/Xs), so reloading restores the ongoing frozen sound. |
 
 **Attack** was removed — lowering Feed gives the same slowed-onset effect.
 **Filter and Compress were removed** — replaced by the shaper (`shape=4, level<0` reproduces
@@ -74,7 +74,6 @@ size-knob-pitch-bend behavior.
 - **FT size** range is `kMinFftOrder=10 .. kMaxFftOrder=13` (orders, i.e. log2). Engines
   preallocate at the max order; changing size never allocates on the audio thread.
 - Changing FT size **resets** the held state and changes plugin latency. Expected.
-- **Live / Save sound** are GUI-only booleans persisted in the state tree (like FT size), not
-  APVTS params. `setStateInformation` restores them; with *Save sound* the held state is stored
-  as a base64 binary `audioState` property and reloaded via `SpectralEngine::read/writeAudioState`
-  under `audioStateLock` (which `processBlock` also takes, so restore can't race processing).
+- **Live** and the active tab are GUI-only values persisted in the state tree (like FT size),
+  not APVTS params; `setStateInformation` restores them. (*Save sound* was removed — the held
+  spectral state is no longer serialised.)

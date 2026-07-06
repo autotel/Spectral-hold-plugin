@@ -6,7 +6,9 @@
   limiter. `processBlock` reads params → runs each channel engine in place → output gain →
   reverb (mono-summed, wet/dry mixed back in) → limiter.
 - `SpectralEngine.{h,cpp}` — the DSP core. Self-contained STFT spectral-hold engine.
-  Depends only on `juce_dsp`, so it builds and is tested without a plugin host.
+  Depends only on `juce_dsp`, so it builds and is tested without a plugin host. Holds the
+  sound across **16 East–West location slots** (2-D `[frequency, location]` field); the
+  `ewLocation` param picks the active slot and blends the output (see dsp-design.md).
 - `PlateReverb.{h,cpp}` — the output reverb (Dattorro plate topology). Same host-free
   contract as `SpectralEngine` (`juce_dsp` only, unit-testable). Cross-channel like the
   limiter — lives in the processor, not per-engine. See
