@@ -8,6 +8,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
 
     setupKnob (feed,       "feed",       "Feed");
     setupKnob (loss,       "loss",       "Loss");
+    setupKnob (dryWet,     "dryWet",     "Dry/Wet");
     setupKnob (output,     "output",     "Output");
 
     setupKnob (shapeAmt,   "shapeAmt",   "Amount");
@@ -134,11 +135,11 @@ void SpectralHoldEditor::resized()
     auto row3 = controls.removeFromTop (controls.getHeight() / 2);
     auto row4 = controls;
 
-    Knob* row1Knobs[] = { &feed, &loss, &output };
+    Knob* row1Knobs[] = { &feed, &loss, &dryWet, &output };
     Knob* row2Knobs[] = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
     Knob* row3Knobs[] = { &harmonize, &harmWidth, &harmonic };
     Knob* row4Knobs[] = { &revMix, &revDecay, &revSize, &revDamp, &revPredelay };
-    layoutRow (row1, row1Knobs, 3);
+    layoutRow (row1, row1Knobs, 4);
     layoutRow (row2, row2Knobs, 7);
     layoutRow (row3, row3Knobs, 3);
     layoutRow (row4, row4Knobs, 5);

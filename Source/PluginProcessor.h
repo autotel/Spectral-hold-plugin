@@ -2,6 +2,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "SpectralEngine.h"
 #include "PlateReverb.h"
+#include "DryDelay.h"
 
 class SpectralHoldProcessor : public juce::AudioProcessor
 {
@@ -79,11 +80,16 @@ private:
     // cached param pointers
     std::atomic<float>* pFeed   = nullptr;
     std::atomic<float>* pLoss   = nullptr;
+    std::atomic<float>* pDryWet = nullptr;
     std::atomic<float>* pOutput = nullptr;
     std::atomic<float>* pPhaseNoise = nullptr;
     std::atomic<float>* pHarmonize = nullptr;
     std::atomic<float>* pHarmWidth = nullptr;
     std::atomic<float>* pHarmonic  = nullptr;
+
+    // global dry/wet: latency-aligned dry path (see DryDelay.h)
+    std::array<DryDelay, 2> dryDelay;
+    std::vector<float> dryScratch;
 
     // output reverb (post-fader, pre-limiter; see agent-wiki/plan-reverb.md)
     std::atomic<float>* pRevMix      = nullptr;

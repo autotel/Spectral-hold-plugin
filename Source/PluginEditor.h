@@ -31,7 +31,7 @@ private:
 
     SpectrumDisplay display;
 
-    Knob feed, loss, output;
+    Knob feed, loss, dryWet, output;
     Knob shapeAmt, shapeMode, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel;
     Knob harmonize, harmWidth, harmonic;
     Knob revMix, revDecay, revSize, revDamp, revPredelay;

@@ -3,6 +3,7 @@
 // bounded, non-trivial output, and that the held tone sustains after input stops.
 #include "SpectralEngine.h"
 #include "PlateReverb.h"
+#include "DryDelay.h"
 #include <cstdio>
 #include <cmath>
 
@@ -637,6 +638,53 @@ int main()
         bool ok = finite && maxAbs < 10.0f;
         printf ("[%s] reverb size sweep stable: finite=%d maxAbs=%.3f\n",
                 ok ? "PASS" : "FAIL", (int) finite, maxAbs);
+        fails += ok ? 0 : 1;
+    }
+
+    // ---- integration branch (agent-wiki/plan-integration.md §7) ----
+
+    // dryWet alignment: DryDelay must delay by exactly the requested amount (this is
+    // what time-aligns the dry path with the engine's fftSize latency in the processor)
+    {
+        DryDelay dd; dd.prepare (8192, block);
+        const int delay = 4096;
+        std::vector<float> src ((size_t) (delay + 4 * block)), got (src.size());
+        for (size_t i = 0; i < src.size(); ++i) src[i] = std::sin (0.01 * (double) i) * 0.7f;
+        for (size_t off = 0; off < src.size(); off += (size_t) block)
+            dd.process (src.data() + off, got.data() + off, block, delay);
+        float maxErr = 0.0f;
+        for (size_t i = (size_t) delay; i < src.size(); ++i)
+            maxErr = juce::jmax (maxErr, std::abs (got[i] - src[i - (size_t) delay]));
+        // and the pre-delay region must be silent (cleared ring)
+        float pre = rms (got.data(), delay);
+        bool ok = maxErr == 0.0f && pre < 1.0e-9f;
+        printf ("[%s] dry delay alignment: maxErr=%.2e preRMS=%.2e\n", ok ? "PASS" : "FAIL", maxErr, pre);
+        fails += ok ? 0 : 1;
+    }
+
+    // everything-on stability (in == out aliasing path, house rule): shaper permanent +
+    // harmonize + phase noise all active on a noise feed -> finite, bounded
+    {
+        SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+        SpectralEngine::Params a;
+        a.feed = 1.0f; a.loss = 0.1f; a.phaseNoise = true;
+        a.shapeAmt = 1.0f; a.shapeMode = 1.0f; a.shape = 2.5f; // mid-crossfade Spikes/Harmonics
+        a.shapeFreq = 800.0f; a.shapeWidth = 0.6f; a.shapeCount = 0.5f; a.shapeLevel = 0.7f;
+        a.harmonize = 0.05f; a.harmWidth = 1.0f; a.harmonic = 1.0f;
+        juce::Random rng (99);
+        std::vector<float> b (block);
+        bool finite = true;
+        float mx = 0.0f;
+        for (int blk = 0; blk < (int) (30.0 * sr / block); ++blk)
+        {
+            for (int i = 0; i < block; ++i) b[(size_t) i] = rng.nextFloat() * 1.6f - 0.8f;
+            e2.process (b.data(), b.data(), block, a); // in == out
+            if (! finiteAll (b.data(), block)) { finite = false; break; }
+            for (int i = 0; i < block; ++i) mx = juce::jmax (mx, std::abs (b[(size_t) i]));
+        }
+        bool ok = finite && mx < 50.0f;
+        printf ("[%s] everything-on stability: finite=%d maxAbs=%.3f\n",
+                ok ? "PASS" : "FAIL", (int) finite, mx);
         fails += ok ? 0 : 1;
     }
 

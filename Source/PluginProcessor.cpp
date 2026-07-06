@@ -15,6 +15,7 @@ SpectralHoldProcessor::SpectralHoldProcessor()
 {
     pFeed   = apvts.getRawParameterValue ("feed");
     pLoss   = apvts.getRawParameterValue ("loss");
+    pDryWet = apvts.getRawParameterValue ("dryWet");
     pOutput = apvts.getRawParameterValue ("output");
     pPhaseNoise = apvts.getRawParameterValue ("phaseNoise");
 
@@ -42,6 +43,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     using namespace juce;
     AudioProcessorValueTreeState::ParameterLayout layout;
 
+    // Creation order = host page order (Push/Maschine bank 8 consecutive params per
+    // page). Page 1 "Hold" (8): feed, loss, dryWet, output, phaseNoise, harmonize,
+    // harmWidth, harmonic. Page 2 "Shaper" (7, revMix spills into its 8th slot -
+    // accepted, see plan-integration.md section 3). Page 3 "Reverb" (rest).
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "feed", 1 }, "Feed",
         NormalisableRange<float> (0.0f, 1.0f), 0.5f));
@@ -51,11 +56,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         NormalisableRange<float> (0.0f, 1.0f), 0.2f));
 
     layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "dryWet", 1 }, "Dry/Wet",
+        NormalisableRange<float> (0.0f, 1.0f), 1.0f)); // 1 = wet-only (today's behavior)
+
+    layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "output", 1 }, "Output",
         NormalisableRange<float> (0.0f, 2.0f), 1.0f)); // output level (linear gain)
 
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "phaseNoise", 1 }, "Phase Noise", false));
+
+    // Harmonize (coupled-oscillator tone interaction; see agent-wiki/harmonize.md)
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "harmonize", 1 }, "Harmonize",
+        NormalisableRange<float> (0.0f, 0.1f), 0.0f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "harmWidth", 1 }, "Harm Width",
+        NormalisableRange<float> (0.01f, 3.0f, 0.0f, 0.4f), 0.5f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "harmonic", 1 }, "Harmonic",
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
 
     // Spectral shaper (replaces the old Filter + Compress; see agent-wiki/dsp-design.md)
     layout.add (std::make_unique<AudioParameterFloat> (
@@ -107,19 +129,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "revPredelay", 1 }, "Reverb Predelay",
         NormalisableRange<float> (0.0f, 250.0f, 0.0f, 0.35f), 20.0f)); // ms, log-ish skew
 
-    // Harmonize (coupled-oscillator tone interaction; see agent-wiki/harmonize.md)
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "harmonize", 1 }, "Harmonize",
-        NormalisableRange<float> (0.0f, 0.1f), 0.0f));
-
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "harmWidth", 1 }, "Harm Width",
-        NormalisableRange<float> (0.01f, 3.0f, 0.0f, 0.4f), 0.5f));
-
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "harmonic", 1 }, "Harmonic",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
-
     return layout;
 }
 
@@ -144,6 +153,10 @@ void SpectralHoldProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     revWetL.assign ((size_t) samplesPerBlock, 0.0f);
     revWetR.assign ((size_t) samplesPerBlock, 0.0f);
     prevRevMix = pRevMix->load();
+
+    for (auto& d : dryDelay)
+        d.prepare (1 << kMaxFftOrder, samplesPerBlock);
+    dryScratch.assign ((size_t) juce::jmax (samplesPerBlock, 16), 0.0f);
 
     // apply any held audio state that was restored from a preset before we were prepared
     if (pendingAudioState.getSize() > 0)
@@ -211,12 +224,27 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     p.shapeCount = pShapeCount->load();
     p.shapeLevel = pShapeLevel->load();
 
+    // --- global dry/wet: capture and mix the latency-aligned dry input. The rings
+    // are always fed (cheap) so turning the knob down never reads stale audio, but at
+    // dryWet=1 (the default) the mix itself is skipped -- output stays bit-exact.
+    const float dryWet = pDryWet->load();
+    if ((int) dryScratch.size() < numSamples)
+        dryScratch.resize ((size_t) numSamples);
+
     {
         const juce::ScopedLock sl (audioStateLock); // block preset restore mid-process
         for (int ch = 0; ch < juce::jmin (numCh, (int) engines.size()); ++ch)
         {
             auto* d = buffer.getWritePointer (ch);
-            engines[(size_t) ch].process (d, d, numSamples, p);
+            auto& eng = engines[(size_t) ch];
+            dryDelay[(size_t) ch].process (d, dryScratch.data(), numSamples, eng.getLatency());
+            eng.process (d, d, numSamples, p); // in place: capture dry BEFORE this
+            if (dryWet < 1.0f)
+            {
+                const float wetG = dryWet, dryG = 1.0f - dryWet;
+                for (int n = 0; n < numSamples; ++n)
+                    d[n] = d[n] * wetG + dryScratch[(size_t) n] * dryG;
+            }
         }
     }
 
