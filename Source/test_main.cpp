@@ -834,6 +834,28 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // ew3b) loss is localized: park the knob at East with high loss -> the East tone decays
+    // while the West tone is spared (far from the listener, att ~ 0 -> decay ~ 1).
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        double pa = 0.0, pb = 0.0;
+        ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
+        ewDeposit (e, 1.0f, 4000.0f, 0.5f, pb);
+        const int bA = ewBin (1000.0f), bB = ewBin (4000.0f);
+        float aBase = ewMeasure (e, 0.0f, bA), bBase = ewMeasure (e, 1.0f, bB);
+
+        // run loss with the listener at East (feed=0, so no re-recording)
+        SpectralEngine::Params d; d.feed = 0.0f; d.loss = 0.8f; d.ewLocation = 0.0f;
+        std::vector<float> b (block);
+        for (int blk = 0; blk < 120; ++blk) { std::fill (b.begin(), b.end(), 0.0f); e.process (b.data(), b.data(), block, d); }
+
+        float aAfter = ewMeasure (e, 0.0f, bA), bAfter = ewMeasure (e, 1.0f, bB);
+        bool ok = aAfter < aBase * 0.3f && bAfter > bBase * 0.7f;
+        printf ("[%s] ew localized loss: East %.3f->%.3f (decays) | West %.3f->%.3f (spared)\n",
+                ok ? "PASS" : "FAIL", aBase, aAfter, bBase, bAfter);
+        fails += ok ? 0 : 1;
+    }
+
     // ew4) edits are distance-weighted: a permanent cut applied with the knob at East
     // strongly reshapes the tone AT East and barely touches the tone at West.
     {

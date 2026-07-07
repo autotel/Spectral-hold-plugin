@@ -193,15 +193,16 @@ void SpectralEngine::processFrame (const Params& p)
 
     // --- per-hop scalars
     // loss -> decay multiplier per hop. loss=0 -> 1 (eternal), loss=1 -> fast.
-    const float lossDecay = std::exp (-p.loss * (float) hopSize / (float) sampleRate * 6.0f);
+    const float lossRate  = p.loss * (float) hopSize / (float) sampleRate * 6.0f;
+    const float lossDecay = std::exp (-lossRate);
     // Injection scale: with the (now phase-coherent) feedback loop, feeding integrates.
     // Scaling by (1-lossDecay) makes the steady-state held level ~= feed * input level
     // instead of building up by 1/(1-lossDecay). Floored so capture still works at loss=0.
+    // (Uses the un-localised rate: freshly-fed bins sit at the listener, att~1.)
     const float injScale = juce::jmax (kInjFloor, 1.0f - lossDecay);
     const float feed    = p.feed * injScale;
     const float trackW  = p.feed; // input's influence on the held *frequency* follows Feed,
                                   // so feed=0 fully freezes (no input phase leak)
-    const float decay   = juce::jmax (kDecayFloor, lossDecay);
     const float refFreq   = (float) sampleRate / (float) fftSize; // freq of bin 1
     const float twoPi     = juce::MathConstants<float>::twoPi;
     constexpr float kTrackThresh = 1.0e-3f;
@@ -210,8 +211,12 @@ void SpectralEngine::processFrame (const Params& p)
     for (int k = 0; k < numBins; ++k)
     {
         // E<->W attenuation of this tone at the listener position; also the strength
-        // with which edits and injection reach it ("nearest more, furthest less").
+        // with which edits, injection and loss reach it ("nearest more, furthest less").
         const float att = ewAtt (std::abs (ewL - binLoc[(size_t) k]));
+
+        // loss is localised too: a tone at the knob decays at the set rate; a far tone
+        // is spared (decay -> 1). exp(-lossRate*att); att=1 everywhere at knob=0 -> legacy.
+        const float decayK = juce::jmax (kDecayFloor, std::exp (-lossRate * att));
 
         // shaper L[k] in [-1..+1]. ratio=1 makes the Level-shape component a no-op
         // (bin 0 and inactive/noise-floor bins, mirroring the old Compress).
@@ -282,7 +287,7 @@ void SpectralEngine::processFrame (const Params& p)
                                  / (aHeld + aInj);
             sk += inj;
         }
-        sk *= decay;
+        sk *= decayK;
         S[(size_t) k] = sk;
 
         // output: the held tone heard from the listener position, momentary-shaped
