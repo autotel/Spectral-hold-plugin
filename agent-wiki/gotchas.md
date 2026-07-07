@@ -2,6 +2,20 @@
 
 Read this before "fixing" something that looks wrong — it probably isn't.
 
+## GUI / LookAndFeel
+- **`SpectralLookAndFeel`'s hover-glow animation has a teardown-order hazard, already
+  guarded — don't remove the guard.** `lnf` is declared *first* in `SpectralHoldEditor`
+  (so it outlives the knobs during construction), which means by C++'s reverse-order
+  member destruction it's destroyed *last* — i.e. the knob `Slider`s are destroyed
+  *before* `lnf`. The glow animation keeps a `std::map<Component*, float>` of hovered
+  sliders and a timer that dereferences those pointers. If that timer fired between a
+  knob's destruction and `lnf`'s own destructor, it would touch a dangling pointer. Fixed
+  by `SpectralHoldEditor::~SpectralHoldEditor()` calling `lnf.stopGlowAnimation()` as its
+  **first** statement — synchronously stops the timer and clears the map on the message
+  thread before any member (knob) starts being destroyed. If you add another animated,
+  per-component LookAndFeel effect, it needs the same "stop first" call in the editor
+  destructor; don't assume the LNF's own destructor is early enough.
+
 ## DSP
 - **Filter and Compress were removed** (see [plan-spectral-shaper.md](plan-spectral-shaper.md)),
   replaced by the unified **shaper** (`ShapeCurves.h`, `shape`/`shapeMode`/etc. params). If

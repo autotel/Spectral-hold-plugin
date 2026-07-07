@@ -133,6 +133,9 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
 
 SpectralHoldEditor::~SpectralHoldEditor()
 {
+    // Must run before the knobs (declared/destroyed after lnf) are torn down -- see
+    // SpectralLookAndFeel::stopGlowAnimation's comment.
+    lnf.stopGlowAnimation();
     setLookAndFeel (nullptr);
 }
 

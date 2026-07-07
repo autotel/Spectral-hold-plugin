@@ -20,6 +20,9 @@
   **Shaper | Harmonize | Reverb** tab strip switching one shared knob row, the FFT-size
   `ComboBox`, the spectrum display, and the hover **info bar**.
 - `SpectrumDisplay.{h,cpp}` — the custom "lighting" spectrum view (its own 30 Hz timer).
+- `SpectralLookAndFeel.{h,cpp}` — the dark rotary knob style. Animates a per-slider hover
+  glow (own lazily-started/stopped 30 Hz timer); see gotchas.md for the teardown-order
+  hazard this animation has to guard against.
 - `test_main.cpp` — offline smoke-test (`SpectralHoldTest` target).
 
 ## Signal flow

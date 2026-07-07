@@ -25,6 +25,38 @@ SpectralLookAndFeel::SpectralLookAndFeel()
     setColour (juce::ToggleButton::tickDisabledColourId, Colour (0xff4a4a56));
 }
 
+SpectralLookAndFeel::~SpectralLookAndFeel()
+{
+    stopTimer();
+}
+
+void SpectralLookAndFeel::stopGlowAnimation()
+{
+    stopTimer();
+    glowLevel.clear();
+}
+
+void SpectralLookAndFeel::timerCallback()
+{
+    constexpr float kEase = 0.30f;    // per-tick approach rate (~30 Hz -> settles in ~300 ms)
+    constexpr float kEpsilon = 0.002f;
+    bool anyMoving = false;
+
+    for (auto& [comp, level] : glowLevel)
+    {
+        const float target = comp->isMouseOverOrDragging (true) ? 1.0f : 0.0f;
+        const float next = level + (target - level) * kEase;
+        if (std::abs (next - level) > kEpsilon || std::abs (target - next) > kEpsilon)
+            anyMoving = true;
+        if (std::abs (next - level) > 0.0001f)
+            comp->repaint();
+        level = next;
+    }
+
+    if (! anyMoving)
+        stopTimer(); // idle: no repaints needed until the next hover change
+}
+
 void SpectralLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                             float sliderPos, float startAngle, float endAngle,
                                             juce::Slider& s)
@@ -54,16 +86,30 @@ void SpectralLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
         g.drawEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f, 1.0f);
     }
 
-    // on hover, the runway shines outward (concentric arcs growing beyond the edge)
-    if (s.isMouseOverOrDragging (true))
+    // on hover, the runway shines outward (concentric arcs growing beyond the edge).
+    // The glow level is eased (0..1) rather than an on/off toggle, so it fades in/out
+    // smoothly; SpectralLookAndFeel::timerCallback animates it and drives repaints.
     {
-        for (int i = 1; i <= 3; ++i)
+        auto it = glowLevel.find (&s);
+        if (it == glowLevel.end())
+            it = glowLevel.emplace (&s, 0.0f).first;
+        const float glow = it->second;
+
+        const bool hovering = s.isMouseOverOrDragging (true);
+        if ((hovering && glow < 0.999f) || (! hovering && glow > 0.001f))
+            if (! isTimerRunning())
+                startTimerHz (30);
+
+        if (glow > 0.001f)
         {
-            const float rr = runR + (float) i * 1.7f;
-            Path glow;
-            glow.addCentredArc (cx, cy, rr, rr, 0.0f, fromAngle, angle, true);
-            g.setColour (accent.withAlpha (0.22f / (float) i));
-            g.strokePath (glow, PathStrokeType (runW, PathStrokeType::curved, PathStrokeType::rounded));
+            for (int i = 1; i <= 4; ++i)
+            {
+                const float rr = runR + (float) i * 2.1f;
+                Path glowArc;
+                glowArc.addCentredArc (cx, cy, rr, rr, 0.0f, fromAngle, angle, true);
+                g.setColour (accent.withAlpha (glow * 0.34f / (float) i));
+                g.strokePath (glowArc, PathStrokeType (runW * 1.15f, PathStrokeType::curved, PathStrokeType::rounded));
+            }
         }
     }
 
