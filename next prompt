@@ -1,18 +1,13 @@
-Create an E <-> W knob (as in east west) that lets the user have multiple held sound buffers. The different tones are not any more held in a 1d space (frequency), but on a 2d space: [frequency,  location]. When the knob is, for example, located in between, tones are recorded at the location 0.5; and they are fade out as the knob gets further from that location. The spots along the e-w line create space for themselves; if we recorded only at the east, then moving west would not fade out the tones towards west. If we, however, added tones at the west, the tones at east would fade out through the knob values toward west till level is zero at the west. However, if we create tones in between east and west, the tones at east would fade out at that middle position, and now the tones added in between would fade out to zero toward west. 
+On branch `exp/integration`, implement `agent-wiki/plan-fixes.md` — read that file first,
+plus `agent-wiki/README.md` and the pages it links. House rules: `./build.sh` green after
+every step, update the wiki in the same step, commit per step.
 
+Hard constraints:
+- Do NOT modify Source/SpectralEngine.{h,cpp} or Source/ShapeCurves.h. If a step seems to
+  require it, stop and report instead.
+- Do NOT change any APVTS parameter IDs (labels and creation order may change).
+- Do NOT change the Dattorro delay/tap constants in PlateReverb.cpp (the Metal knob only
+  scales diffusion gains and LFO excursion, plan §5).
 
-
-Things to fix: 
-
-- I don't perceive the effect of the reverb feeding back to the held tone. If it is indeed correctly implemented, then it makes no sense to have it.
-- Add a limiter module, output only, with two params: release time and threshold level. I wonder if it could be fit into the first 8 parameters page 
-- harmonize module is not working unless there is some input feed level
-- could the "shaper" "shape" knob display the names of the shapes instead of numbers?
-- when shape level is zero, don't make the line disappear, it only disappears with the amount mechanism
-- harmonic knob should be named "harmonics"
-- shaper/mode should be renamed to feed like in the reverb, and be the last knob on the page
-- Add a "metal" knob to the reverb, which turns the reverb more metallic when turned up
-- let's remove the "save sound" feature
-- in reverb module move the damp knob before size
-- the other pages would need parameters to have their positions adapted too to make sensical pages when used in maschine/push
-- make the knob's shine to be more notorious and make them appear smoothly, if it's reasonably possible.
+Order: §1+§2 display overlays -> §3 remove revFeed -> §4 limiter params -> §5 reverb Metal
+-> §6-§8 labels/knob order -> §9 macro pages -> §10 knob shine -> §11 wiki debt.
