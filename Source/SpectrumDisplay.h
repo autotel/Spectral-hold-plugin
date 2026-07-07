@@ -28,10 +28,6 @@ public:
     // Brush size (GUI-only), gaussian half-width in octaves. Set from the editor.
     void setBrushSigmaOct (float s) { brushSigmaOct = juce::jmax (0.05f, s); repaint(); }
 
-    // Which module overlay to draw, following the editor's active tab (view-only):
-    // 0 = shaper gain curve, 1 = harmonize influence, 2 = none (reverb has no overlay).
-    void setOverlayMode (int m) { overlayMode = m; repaint(); }
-
 private:
     void timerCallback() override;
 
@@ -61,8 +57,6 @@ private:
     std::atomic<float>* pHarmWidth = nullptr;
     std::vector<float> peakFreq, peakWeight, peakDrift;
     int peakCount = 0;
-
-    int overlayMode = 0; // see setOverlayMode
 
     // brush cursor state (message thread / paint only)
     juce::Point<float> mousePos;

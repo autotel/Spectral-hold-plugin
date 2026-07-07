@@ -139,5 +139,7 @@ Read this before "fixing" something that looks wrong — it probably isn't.
 - **Param creation order is the Push/Maschine page grouping** (8 per page). Don't
   alphabetize or "tidy" `createLayout()` — order is meaningful. Page 2 (shaper) has 7 +
   `revMix` spilling into slot 8; accepted, not a bug.
-- **Tabs are view-only.** All modules process regardless of which tab is visible; the
-  display overlays follow the active tab so they don't stack.
+- **Tabs are view-only.** All modules process regardless of which tab is visible. Display
+  overlays (shaper curve, harmonize influence) are **always shown** when their module is
+  active, independent of the tab — don't gate them by tab again, it hid armed modifiers
+  from view on a tab the user wasn't looking at.

@@ -176,7 +176,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     // ramp alpha over [0 .. kFadeRange] instead of popping in/out at a fixed threshold
     constexpr float kFadeRange = 0.15f;
     const float fadeAlpha = juce::jlimit (0.0f, 1.0f, shAmt / kFadeRange);
-    if (overlayMode == 0 && fadeAlpha > 0.001f && std::abs (shLevel) > 0.001f)
+    if (fadeAlpha > 0.001f)
     {
         // Level shape needs a rough pivot mean, approximated from the (already smoothed)
         // display magnitudes -- exact match isn't required, this is a preview only.
@@ -230,7 +230,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 
     // --- harmonize influence overlay ---------------------------------------
     const float harmAmt = pHarm != nullptr ? pHarm->load() : 0.0f;
-    if (overlayMode == 1 && harmAmt > 0.001f && peakCount > 0)
+    if (harmAmt > 0.001f && peakCount > 0)
     {
         const float sigma = pHarmWidth != nullptr ? pHarmWidth->load() : 0.5f;
         const float invS2 = 1.0f / (2.0f * juce::jmax (0.01f, sigma) * sigma);

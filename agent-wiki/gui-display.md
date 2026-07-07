@@ -12,11 +12,12 @@
 - **Phase → hue**, very slightly: `pt = (phase+π)/2π`, `hue = 0.72 - 0.24·pt`
   (purple-blue → green-blue), saturation only **0.25** so lines stay near-white.
 
-## Overlay gating by editor tab
-Both module overlays (shaper curve, harmonize influence) exist in `SpectrumDisplay`, but
-only the **active editor tab's** overlay is drawn (`setOverlayMode`: 0 shaper, 1
-harmonize, 2 none — reverb has no overlay). View-only: the DSP runs regardless of tab.
-The active tab is persisted in the state tree (`uiTab`, like `fftOrder`).
+## Overlays are always visible, regardless of tab
+Both module overlays (shaper curve, harmonize influence) exist in `SpectrumDisplay` and
+**both draw whenever their module is audibly active**, independent of which editor tab is
+showing. This is deliberate: if the tab gated visibility, a modifier could be armed on a
+tab you're not looking at with no visual sign of it. The active tab (`uiTab`, persisted
+like `fftOrder`) only controls which knob row is shown — it no longer touches the display.
 
 ## Info bar
 A one-line label at the very bottom of the editor. Every control registers a description
@@ -25,9 +26,10 @@ Ableton-style. When adding a control, register its text there too.
 
 ## Shaper curve overlay
 - Alpha **fades in/out over `shapeAmt ∈ [0 .. kFadeRange=0.15]`** rather than popping
-  on/off at a threshold (`fadeAlpha` in `SpectrumDisplay::paint`) — Level itself still
-  hard-gates visibility (`|shapeLevel| > 0.001`) since `level=0` is a flat no-op curve
-  for every shape. It plots the **momentary** gain curve
+  on/off at a threshold (`fadeAlpha` in `SpectrumDisplay::paint`). Unlike an earlier
+  version, `level=0` does **not** hide the line — it draws flat at unity gain, which is
+  the intended signal that the module is armed (Amount > 0) even though Level is neutral.
+  Only Amount fades the overlay out. It plots the **momentary** gain curve
   `gOut(freq)` across the same log-x axis, as a soft amber stroke, mapped linearly:
   `gOut=0` (full cut) → bottom, `gOut=1` (no change) → mid-height, `gOut≥2` (+6 dB) → top
   (clamped; the real momentary ceiling is +12 dB, the curve just clips visually there).

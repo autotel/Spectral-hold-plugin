@@ -158,8 +158,10 @@ void SpectralHoldEditor::setInfo (juce::Component& c, const juce::String& descri
 void SpectralHoldEditor::setActiveTab (int tabIndex)
 {
     activeTab = tabIndex;
-    proc.setUiTab (tabIndex);              // persisted with the plugin state
-    display.setOverlayMode (tabIndex);     // shaper curve / harmonize influence / none
+    proc.setUiTab (tabIndex); // persisted with the plugin state
+    // Both display overlays (shaper curve, harmonize influence) are always drawn when
+    // their module is active, regardless of the visible tab -- so an armed modifier is
+    // never hidden just because you're looking at a different tab.
 
     Knob* shaperKnobs[]    = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
     Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
