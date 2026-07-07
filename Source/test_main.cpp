@@ -150,8 +150,9 @@ int main()
         fails += ok ? 0 : 1;
     }
 
-    // 6) shaper Level shape (width=0.5, count=1, mode=1 permanent): +expand widens the
-    // loud/quiet ratio, -homogenise narrows it -- same math as the old Compress knob.
+    // 6) shaper Level shape (mode=1 permanent): +expand widens the loud/quiet ratio,
+    // -homogenise narrows it -- same math as the old Compress knob. Post-#14, Width sets
+    // the band extent (1 = whole spectrum) and Count the extremes-vs-mean warp (0.5 = 1:1).
     {
         const int B500 = (int) std::lround (500.0  * 4096.0 / sr);  // ~bin 43
         const int B2k  = (int) std::lround (2000.0 * 4096.0 / sr);  // ~bin 171
@@ -171,7 +172,7 @@ int main()
         {
             SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f;
             h.shapeAmt = 1.0f; h.shapeMode = 1.0f; h.shape = 0.0f;
-            h.shapeWidth = 0.5f; h.shapeCount = 1.0f; h.shapeLevel = shapeLevel;
+            h.shapeWidth = 1.0f; h.shapeCount = 0.5f; h.shapeLevel = shapeLevel;
             for (int blk = 0; blk < blocks; ++blk) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); }
             int n = 0; for (int t = 0; t < 8 && n == 0; ++t) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); n = eng.copyDisplay (m, ph); }
             return m[(size_t) B500] / juce::jmax (1.0e-9f, m[(size_t) B2k]);
@@ -221,9 +222,9 @@ int main()
         fails += ok ? 0 : 1;
     }
 
-    // 6c) shaper Spikes shape is subtractive band-select: a single spike (count=0) at
-    // shapeFreq. level>0 rejects the peak tone (keeps the off-peak tone); level<0 passes
-    // only the peak tone (cuts the off-peak tone). Momentary (mode=0), read per-bin.
+    // 6c) shaper Spikes shape is now a BIPOLAR comb (nets to zero): a single tooth
+    // (count=0) at shapeFreq. level>0 BOOSTS the tone at shapeFreq, level<0 CUTS it; a
+    // tone off the comb (4 kHz) is barely touched. Momentary (mode=0), read per-bin.
     {
         const int B1k = (int) std::lround (1000.0 * 4096.0 / sr);
         const int B4k = (int) std::lround (4000.0 * 4096.0 / sr);
@@ -240,28 +241,25 @@ int main()
             SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f;
             h.shapeAmt = 1.0f; h.shapeMode = 0.0f; h.shape = 2.0f;
             h.shapeFreq = 1000.0f; h.shapeWidth = 0.5f; h.shapeCount = 0.0f; h.shapeLevel = level;
-            // run several frames so the display snapshot reflects the shaped output (mode=0
-            // is non-destructive, so S is unchanged and each measure sees the same held tones)
             for (int blk = 0; blk < 24; ++blk) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); }
             int n = 0; for (int t = 0; t < 8 && n == 0; ++t) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); n = eng.copyDisplay (m, ph); }
             at1k = m[(size_t) B1k]; at4k = m[(size_t) B4k];
         };
-        float f1, f4, r1, r4, p1, p4;
+        float f1, f4, b1, b4, c1, c4;
         measure (0.0f,  f1, f4);  // flat reference
-        measure (+1.0f, r1, r4);  // reject peaks -> 1k cut, 4k kept
-        measure (-1.0f, p1, p4);  // pass only peaks -> 4k cut, 1k kept
-        bool ok = r1 < f1 * 0.3f && r4 > f4 * 0.7f   // rejected the peak tone, kept the other
-                  && p4 < f4 * 0.3f && p1 > f1 * 0.7f; // passed only the peak tone
-        printf ("[%s] shaper spikes subtractive: reject(1k=%.4f,4k=%.4f) pass(1k=%.4f,4k=%.4f)\n",
-                ok ? "PASS" : "FAIL", r1, r4, p1, p4);
+        measure (+1.0f, b1, b4);  // boost the tooth -> 1k up, 4k ~unchanged
+        measure (-1.0f, c1, c4);  // cut the tooth   -> 1k down, 4k ~unchanged
+        bool ok = b1 > f1 * 1.3f && c1 < f1 * 0.7f          // 1k boosted / cut
+                  && b4 > f4 * 0.7f && b4 < f4 * 1.5f        // 4k barely moved (off the comb)
+                  && c4 > f4 * 0.7f && c4 < f4 * 1.5f;
+        printf ("[%s] shaper spikes bipolar: 1k(flat=%.4f boost=%.4f cut=%.4f) 4k(flat=%.4f)\n",
+                ok ? "PASS" : "FAIL", f1, b1, c1, f4);
         fails += ok ? 0 : 1;
     }
 
-    // 6d) shaper Harmonics shape is subtractive overtone/undertone band-select: tones at
-    // 1 kHz (the fundamental) and 2.5 kHz (NOT in 1 kHz's harmonic series). level>0
-    // rejects the harmonic series (cuts 1k, keeps 2.5k); level<0 passes only the series
-    // (keeps 1k, cuts 2.5k). count=0.3 -> ~3.6 harmonics/side, plenty to cover 2k/3k
-    // without touching 2.5k. Momentary (mode=0), read per-bin.
+    // 6d) shaper Harmonics shape is now a BIPOLAR comb: fundamental at 1 kHz, a tone at
+    // 2.5 kHz not in its series. level>0 BOOSTS the harmonic series (1k up), level<0 cuts
+    // it; the off-series 2.5k tone is barely touched. Momentary (mode=0), read per-bin.
     {
         const int B1k   = (int) std::lround (1000.0 * 4096.0 / sr);
         const int B2500 = (int) std::lround (2500.0 * 4096.0 / sr);
@@ -278,22 +276,22 @@ int main()
             SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f;
             h.shapeAmt = 1.0f; h.shapeMode = 0.0f; h.shape = shapeParam;
             h.shapeFreq = 1000.0f; h.shapeWidth = 0.5f; h.shapeCount = 0.3f; h.shapeLevel = level;
-            // run several frames so the display snapshot reflects the shaped output (mode=0
-            // is non-destructive, so S is unchanged and each measure sees the same held tones)
             for (int blk = 0; blk < 24; ++blk) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); }
             int n = 0; for (int t = 0; t < 8 && n == 0; ++t) { std::fill (buf2.begin(), buf2.end(), 0.0f); eng.process (buf2.data(), buf2.data(), block, h); n = eng.copyDisplay (m, ph); }
             at1k = m[(size_t) B1k]; at2500 = m[(size_t) B2500];
         };
-        float f1, f2, r1, r2, p1, p2, x1, x2;
+        float f1, f2, b1, b2, c1, c2, x1, x2;
         measure (0.0f,  3.0f, f1, f2);  // flat reference
-        measure (+1.0f, 3.0f, r1, r2);  // reject series -> 1k cut, 2.5k kept
-        measure (-1.0f, 3.0f, p1, p2);  // pass only series -> 2.5k cut, 1k kept
+        measure (+1.0f, 3.0f, b1, b2);  // boost series -> 1k up (2.5k sits ~anti-tooth -> cut)
+        measure (-1.0f, 3.0f, c1, c2);  // cut series   -> 1k down
         measure (-1.0f, 2.5f, x1, x2);  // mid crossfade (Spikes<->Harmonics) stays finite
-        bool ok = r1 < f1 * 0.3f && r2 > f2 * 0.7f    // rejected the fundamental, kept 2.5k
-                  && p2 < f2 * 0.3f && p1 > f1 * 0.7f  // passed only the harmonic series
+        // 2.5 kHz is the geometric midpoint of the 2nd/3rd harmonic (~2449 Hz) -> an
+        // anti-tooth, so it moves OPPOSITE the fundamental (bipolar comb). Assert that.
+        bool ok = b1 > f1 * 1.3f && c1 < f1 * 0.7f          // fundamental boosted / cut
+                  && b2 < f2 * 0.9f                          // 2.5k cut when the series is boosted
                   && std::isfinite (x1) && std::isfinite (x2);
-        printf ("[%s] shaper harmonics subtractive: reject(1k=%.4f,2.5k=%.4f) pass(1k=%.4f,2.5k=%.4f)\n",
-                ok ? "PASS" : "FAIL", r1, r2, p1, p2);
+        printf ("[%s] shaper harmonics bipolar: 1k(flat=%.4f boost=%.4f cut=%.4f) 2.5k(flat=%.4f boost=%.4f)\n",
+                ok ? "PASS" : "FAIL", f1, b1, c1, f2, b2);
         fails += ok ? 0 : 1;
     }
 

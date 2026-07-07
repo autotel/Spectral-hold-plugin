@@ -44,77 +44,73 @@ namespace ShapeCurves
         return gaussianEnvLerp (x, x0, sigma, count);
     }
 
-    // --- shape 1: Sigmoid / tanh shelf (LP <-> HP) -------------------------------
+    // --- shape 1: Sigmoid / tanh tilt (bipolar shelf pair) -----------------------
+    // Bipolar so it nets to zero by construction (antisymmetric around x0): level>0
+    // boosts above x0 and cuts below by the same amount (a spectral tilt), level<0
+    // the reverse, flat at level=0. Reversible in permanent mode (unlike a pure cut).
     inline float sigmoidShape (float x, float x0, float width, float level)
     {
         const float wOct = 0.1f * std::pow (2.0f, width * 5.64f); // 0.1 .. 5 octaves
-        const float s    = std::tanh ((x - x0) / wOct);
-        // level>0: cuts below x0 (highpass); level<0: cuts above x0 (lowpass);
-        // continuous through level=0 (flat, per spec).
-        return level > 0.0f ? level * (s - 1.0f) * 0.5f
-                             : level * (s + 1.0f) * 0.5f;
+        const float s    = std::tanh ((x - x0) / wOct);           // -1 below x0 .. +1 above
+        return level * s;
     }
 
-    // --- shape 2: N-spikes (subtractive band-select) -----------------------------
-    // Purely attenuating (L <= 0), sign-split like the Sigmoid: level>0 REJECTS the
-    // peaks (notches), level<0 passes ONLY the peaks (cuts everything outside them),
-    // flat no-op at level=0. `env` in [0..1] is the spike comb (1 at a peak, 0 between).
+    // Bipolar comb: +1 on the "teeth" gaussians, -1 on the "anti-teeth" halfway between
+    // them, ~0 elsewhere. Zero-mean by construction (equal, opposite, evenly spaced
+    // bumps) so boosting the teeth is balanced by cutting the gaps -- nets to zero and
+    // stays reversible. `an` fades the outer teeth in with extent. Shared by Spikes and
+    // (with log-spaced positions) Harmonics.
+
+    // --- shape 2: N-spikes (bipolar comb) ----------------------------------------
+    // level>0 boosts a comb of peaks spaced `d` octaves apart (cutting halfway between);
+    // level<0 inverts it. Teeth at x0 + n*d, anti-teeth at x0 + (n+0.5)*d.
     inline float spikesShape (float x, float x0, float width, float count, float level)
     {
         const float d      = 0.2f * std::pow (2.0f, width * 4.6f); // spacing 0.2 .. 5 octaves
-        const float sigma  = 0.25f * d;                            // spikes stay distinct
-        const float nMaxF  = count * 12.0f;                        // side-pairs at full knob (slow ramp; ~old count=0.3)
-        const float nCentF = (x - x0) / d;
-        const int   nCent  = (int) std::lround (nCentF);
-        float sum = 0.0f;
+        const float sigma  = 0.20f * d;                            // teeth/anti-teeth stay distinct
+        const float nMaxF  = count * 12.0f;                        // side-pairs at full knob
+        const int   nCent  = (int) std::lround ((x - x0) / d);
+        float teeth = 0.0f, anti = 0.0f;
         for (int n = nCent - 1; n <= nCent + 1; ++n)
         {
             const float an = std::clamp (nMaxF - std::abs ((float) n) + 1.0f, 0.0f, 1.0f);
             if (an <= 0.0f) continue;
-            const float dd = x - (x0 + (float) n * d);
-            sum += an * std::exp (-(dd * dd) / (2.0f * sigma * sigma));
+            const float dt = x - (x0 + (float) n * d);
+            teeth += an * std::exp (-(dt * dt) / (2.0f * sigma * sigma));
+            const float da = x - (x0 + ((float) n + 0.5f) * d);
+            anti  += an * std::exp (-(da * da) / (2.0f * sigma * sigma));
         }
-        const float env = std::clamp (sum, 0.0f, 1.0f);
-        return level >= 0.0f ? -level * env            // reject peaks (notch)
-                              :  level * (1.0f - env);  // = -|level|*(1-env): pass only peaks
+        const float env = std::clamp (teeth, 0.0f, 1.0f) - std::clamp (anti, 0.0f, 1.0f); // [-1..1]
+        return level * env;
     }
 
-    // --- shape 3: Harmonics (subtractive overtone/undertone comb) ----------------
-    // Spikes at x0 +- log2(n), n=1,2,3,... (overtones above x0, undertones below --
-    // i.e. n*f0 and f0/n). Same subtractive sign-split as Spikes: level>0 notches the
-    // harmonic series out, level<0 passes ONLY the harmonic series, flat at level=0.
+    // --- shape 3: Harmonics (bipolar overtone/undertone comb) --------------------
+    // Teeth at x0 +- log2(n), n=1,2,3,... (n*f0 and f0/n); anti-teeth at the geometric
+    // midpoints between consecutive harmonics. level>0 boosts the harmonic series and
+    // cuts between, level<0 the reverse. Bipolar/zero-mean, so reversible.
     inline float harmonicsShape (float x, float x0, float width, float count, float level)
     {
         const float sigma0 = 0.03f * std::pow (2.0f, width * 3.5f); // base spike half-width, oct
         const float nMaxF  = count * 12.0f;                          // harmonics/side at full knob
         const float D      = std::abs (x - x0);                      // octaves from fundamental
+        const float q      = std::pow (2.0f, D);
+        const int   nLo    = std::max (1, (int) std::floor (q));
 
-        float sum = 0.0f;
-        if (D < 1.0e-6f)
+        float teeth = 0.0f, anti = 0.0f;
+        for (int n = std::max (1, nLo - 1); n <= nLo + 1; ++n)
         {
-            // at the fundamental itself: nearest candidate is n=1 on both sides
-            const float a1  = std::clamp (nMaxF - (1.0f - 1.0f) + 1.0f, 0.0f, 1.0f);
-            const float gap = std::log2 (2.0f / 1.0f);
-            const float s1  = std::min (sigma0, 0.3f * gap);
-            sum = a1 * std::exp (-(D * D) / (2.0f * s1 * s1));
+            const float an  = std::clamp (nMaxF - ((float) n - 1.0f) + 1.0f, 0.0f, 1.0f);
+            if (an <= 0.0f) continue;
+            const float gap = std::log2 ((float) (n + 1) / (float) n); // local spacing, shrinks with n
+            const float sN  = std::min (sigma0, 0.3f * gap);
+            const float dt  = D - std::log2 ((float) n);
+            teeth += an * std::exp (-(dt * dt) / (2.0f * sN * sN));
+            const float mid = 0.5f * (std::log2 ((float) n) + std::log2 ((float) (n + 1)));
+            const float da  = D - mid;
+            anti += an * std::exp (-(da * da) / (2.0f * sN * sN));
         }
-        else
-        {
-            const float q = std::pow (2.0f, D); // freq/f0 (overtone side) or f0/freq (undertone side)
-            const int   nLo = std::max (1, (int) std::floor (q));
-            for (int n : { nLo, nLo + 1 })
-            {
-                const float an  = std::clamp (nMaxF - ((float) n - 1.0f) + 1.0f, 0.0f, 1.0f);
-                if (an <= 0.0f) continue;
-                const float gap = std::log2 ((float) (n + 1) / (float) n); // local spacing, shrinks with n
-                const float sN  = std::min (sigma0, 0.3f * gap);           // keep neighbours distinct
-                const float dd  = D - std::log2 ((float) n);
-                sum += an * std::exp (-(dd * dd) / (2.0f * sN * sN));
-            }
-        }
-        const float env = std::clamp (sum, 0.0f, 1.0f);
-        return level >= 0.0f ? -level * env            // reject the harmonic series (notch comb)
-                              :  level * (1.0f - env);  // pass ONLY the harmonic series
+        const float env = std::clamp (teeth, 0.0f, 1.0f) - std::clamp (anti, 0.0f, 1.0f);
+        return level * env;
     }
 
     // --- shape 4: Sine (replaces Filter) -----------------------------------------
@@ -133,7 +129,10 @@ namespace ShapeCurves
     {
         switch (idx)
         {
-            case 0:  return levelShape (ratio, width, level) * levelWindow (x, x0, count);
+            // Level (based on the current sound): Width sets the affected band's extent
+            // (more intuitive), Count sets the extremes-vs-mean warp. (#14: width<->count
+            // swapped vs the original mapping.)
+            case 0:  return levelShape (ratio, count, level) * levelWindow (x, x0, width);
             case 1:  return sigmoidShape (x, x0, width, level);
             case 2:  return spikesShape (x, x0, width, count, level);
             case 3:  return harmonicsShape (x, x0, width, count, level);

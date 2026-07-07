@@ -12,6 +12,10 @@ namespace
                                           // ShapeCurves' 4.6 normaliser -- see plan doc's
                                           // "compress equivalence": don't change independently)
     constexpr float kLn4       = 1.386294361f; // momentary boost ceiling: +12 dB at L=1
+    constexpr float kPermCeilNorm = 1.0f; // permanent-mode boost self-limits toward this
+                                          // NORMALISED bin magnitude (|S|*2/fftSize, i.e. ~a
+                                          // full-scale sine); keeps the bipolar shapes from
+                                          // compounding upward without a hard clamp
     constexpr float kPhaseNoise   = 0.15f; // rad of per-frame phase jitter when noise is on
     // harmonize
     constexpr float kEntRate   = 0.12f;  // per-frame fraction toward the entrainment target
@@ -239,8 +243,20 @@ void SpectralEngine::processFrame (const Params& p)
 
         // permanent shaper: reshape the held state, distance-weighted (compounds over
         // frames; a tone at the knob gets the full edit, a far one barely changes).
+        // The bipolar shapes can BOOST (L>0), which would compound without bound; so the
+        // boost self-limits as a bin approaches kPermCeil (equilibrium there), while cuts
+        // (L<0) are unbounded-down as before. Positional shapes thus stay stable in
+        // permanent mode without a per-bin hard clamp.
         if (hasL && p.shapeMode > 1.0e-4f)
-            S[(size_t) k] *= std::exp (L * p.shapeMode * kPermScale * att);
+        {
+            float e = L * p.shapeMode * kPermScale * att;
+            if (e > 0.0f)
+            {
+                const float permCeil = kPermCeilNorm * 0.5f * (float) fftSize; // |S| units
+                e *= juce::jmax (0.0f, 1.0f - std::abs (S[(size_t) k]) / permCeil);
+            }
+            S[(size_t) k] *= std::exp (e);
+        }
 
         // momentary shaper: non-destructive output gain (full strength: it shapes what
         // you hear, and the audible output is already location-gained).
