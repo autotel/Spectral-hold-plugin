@@ -4,6 +4,23 @@
 namespace
 {
     constexpr float kLimAttMs = 5.0f;     // limiter attack (catch peaks) -- fixed, not a param
+
+    // Shape names for the display textbox (see ShapeCurves.h - kept as plain strings here
+    // rather than including ShapeCurves.h just for the name list).
+    const juce::StringArray kShapeNames { "Level", "Sigmoid", "Spikes", "Harmonics", "Sine" };
+
+    juce::String shapeValueToString (float value, int)
+    {
+        const float v = juce::jlimit (0.0f, (float) (kShapeNames.size() - 1), value);
+        const int   i0 = (int) std::floor (v);
+        const int   i1 = juce::jmin (i0 + 1, kShapeNames.size() - 1);
+        const float frac = v - (float) i0;
+        if (frac < 0.05f || i0 == i1)
+            return kShapeNames[i0];
+        if (frac > 0.95f)
+            return kShapeNames[i1];
+        return kShapeNames[i0] + ">" + kShapeNames[i1];
+    }
 }
 
 SpectralHoldProcessor::SpectralHoldProcessor()
@@ -107,7 +124,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shape", 1 }, "Shape",
-        NormalisableRange<float> (0.0f, 4.0f), 0.0f)); // Level/Sigmoid/Spikes/Harmonics/Sine
+        NormalisableRange<float> (0.0f, 4.0f), 0.0f, // Level/Sigmoid/Spikes/Harmonics/Sine
+        AudioParameterFloatAttributes().withStringFromValueFunction (shapeValueToString)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shapeFreq", 1 }, "Shape Freq",

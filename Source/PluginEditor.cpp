@@ -17,7 +17,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
 
     // tabbed rows
     setupKnob (shapeAmt,   "shapeAmt",   "Amount");
-    setupKnob (shapeMode,  "shapeMode",  "Mode");
+    setupKnob (shapeMode,  "shapeMode",  "Feed");
     setupKnob (shape,      "shape",      "Shape");
     setupKnob (shapeFreq,  "shapeFreq",  "Freq");
     setupKnob (shapeWidth, "shapeWidth", "Width");
@@ -26,7 +26,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
 
     setupKnob (harmonize,  "harmonize",  "Harmonize");
     setupKnob (harmWidth,  "harmWidth",  "Width");
-    setupKnob (harmonic,   "harmonic",   "Harmonic");
+    setupKnob (harmonic,   "harmonic",   "Harmonics");
 
     setupKnob (revMix,      "revMix",      "Mix");
     setupKnob (revDecay,    "revDecay",    "Decay");
@@ -104,7 +104,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setInfo (limThreshold.slider, "Output ceiling. The slow limiter pulls the level down to this.");
     setInfo (limRelease.slider,   "How fast the limiter recovers after pulling down.");
     setInfo (shapeAmt.slider,   "Shaper depth: scales the whole curve.");
-    setInfo (shapeMode.slider,  "Shaper: momentary (out-only, reversible) vs permanent (etched into the held sound).");
+    setInfo (shapeMode.slider,  "How much the shaping is etched into the held sound vs only heard.");
     setInfo (shape.slider,      "Morphs the curve: Level, Sigmoid, Spikes, Harmonics, Sine.");
     setInfo (shapeFreq.slider,  "Shaper curve centre frequency.");
     setInfo (shapeWidth.slider, "Shaper curve width / steepness / spacing (per shape).");
@@ -112,7 +112,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setInfo (shapeLevel.slider, "Shaper strength, signed. 0 = off; negative inverts (cut/pass per shape).");
     setInfo (harmonize.slider,  "Held tones pull each other's pitch until they drift together. Permanent while Feed is low; live input re-tunes it back.");
     setInfo (harmWidth.slider,  "How far apart (in octaves) tones still influence each other.");
-    setInfo (harmonic.slider,   "Blend: 0 = tones average together, 1 = tones snap to simple harmonic ratios.");
+    setInfo (harmonic.slider,   "Harmonics blend: 0 = tones average together, 1 = tones snap to simple harmonic ratios.");
     setInfo (revMix.slider,     "Reverb wet/dry on the output. 0 = reverb fully off.");
     setInfo (revDecay.slider,   "Reverb tail length.");
     setInfo (revDamp.slider,    "Darkens the reverb tail.");
@@ -123,9 +123,9 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setInfo (sizeBox,           "Spectral resolution vs time response. Changing it resets the held sound.");
     setInfo (liveButton,        "Report zero latency to the host (for live playing; disables delay compensation).");
     setInfo (brushSizeSlider,   "Drag on the display to boost/cut held tones. This sets the brush width.");
-    setInfo (shaperTab,         "Per-bin amplitude curves: filter, compress, combs and more.");
+    setInfo (shaperTab,         "Per-bin amplitude shaping: tilts, combs and more.");
     setInfo (harmonizeTab,      "Coupled-oscillator pitch interaction between held tones.");
-    setInfo (reverbTab,         "Plate reverb on the output, optionally fed back into the hold.");
+    setInfo (reverbTab,         "Plate reverb on the output.");
 
     setActiveTab (proc.getUiTab()); // restore the last shown tab (persisted in state)
     setSize (860, 580);
@@ -167,7 +167,7 @@ void SpectralHoldEditor::setActiveTab (int tabIndex)
     // their module is active, regardless of the visible tab -- so an armed modifier is
     // never hidden just because you're looking at a different tab.
 
-    Knob* shaperKnobs[]    = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
+    Knob* shaperKnobs[]    = { &shapeAmt, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel, &shapeMode };
     Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
     Knob* reverbKnobs[]    = { &revMix, &revDecay, &revDamp, &revSize, &revPredelay, &revMetal };
 
@@ -230,7 +230,7 @@ void SpectralHoldEditor::resized()
     reverbTab.setBounds    (tabs.reduced (2, 0));
 
     // tabbed row: all three share the same area; visibility picks the active one
-    Knob* shaperKnobs[]    = { &shapeAmt, &shapeMode, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel };
+    Knob* shaperKnobs[]    = { &shapeAmt, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel, &shapeMode };
     Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
     Knob* reverbKnobs[]    = { &revMix, &revDecay, &revDamp, &revSize, &revPredelay, &revMetal };
     layoutRow (controls, shaperKnobs,    7);

@@ -27,14 +27,14 @@ description of whatever control the mouse is over (Ableton-style).
 | Phase Noise `phaseNoise` | bool      | off     | When on, injects ±`kPhaseNoise` rad of per-frame random jitter into each bin's phase advance (shimmer/roughness). Non-accumulating — does not permanently detune. |
 | Harmonize `harmonize` | 0 .. 0.1   | 0.0     | Master amount of coupled-oscillator pitch interaction. See [harmonize.md](harmonize.md). Inherently *permanent* (no mode knob — see gotchas.md). |
 | Width `harmWidth`     | 0.01 .. 3 oct | 0.5  | σ of the nearness-influence curve. |
-| Harmonic `harmonic`   | 0 .. 1     | 0.0     | Character blend under Harmonize: 0 = entrainment, 1 = harmonic attraction. |
+| Harmonics `harmonic`  | 0 .. 1     | 0.0     | Character blend under Harmonize: 0 = entrainment, 1 = harmonic attraction. (GUI label was "Harmonic", id unchanged.) |
 | Amount `shapeAmt`   | 0 .. 1         | 1.0     | Global depth of the shaper; scales `L[k]` before it's applied. |
-| Mode `shapeMode`    | 0 .. 1         | 0.0     | Momentary (0, output-only, non-destructive) ↔ permanent (1, fed into the held state, compounding). Continuous cross-fade. This is the shaper's *integration* knob. |
-| Shape `shape`       | 0 .. 4         | 0.0     | Cross-fades **Level(0) → Sigmoid(1) → Spikes(2) → Harmonics(3) → Sine(4)**. |
+| Shape `shape`       | 0 .. 4         | 0.0     | Cross-fades **Level(0) → Sigmoid(1) → Spikes(2) → Harmonics(3) → Sine(4)**. The textbox shows the shape name (or `"Name>Name"` mid-crossfade), not the raw number. |
 | Freq `shapeFreq`    | 20 .. 20000 Hz | 1000    | Curve centre, log-skewed range (`NormalisableRange` skew 0.25). Meaning depends on shape (§ below). |
 | Width `shapeWidth`  | 0 .. 1         | 0.5     | Width/steepness/spacing; meaning per shape. |
 | Count `shapeCount`  | 0 .. 1         | 1.0     | Extent/repetition; meaning per shape. |
 | Level `shapeLevel`  | -1 .. +1       | 0.0     | Signed strength. **0 = no effect for every shape** (global bypass). |
+| Feed `shapeMode`    | 0 .. 1         | 0.0     | Momentary (0, output-only, non-destructive) ↔ permanent (1, fed into the held state, compounding). Continuous cross-fade. This is the shaper's *integration* knob. GUI label was "Mode"; id unchanged. Last knob on the Shaper tab (like the reverb's Feed pattern before revFeed was removed — see gotchas.md). |
 | Mix `revMix`         | 0 .. 1         | 0.0     | Output reverb wet/dry, equal-power. 0 = bit-exact dry (hard bypass, see gotchas.md). |
 | Decay `revDecay`     | 0 .. 1         | 0.5     | Tank feedback / tail length. |
 | Damp `revDamp`       | 0 .. 1         | 0.3     | One-pole damping inside the tank: 0 = bright, 1 = dark. |
