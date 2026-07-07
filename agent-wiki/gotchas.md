@@ -101,11 +101,14 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   set to the same rate before touching anything else.
 - Reverb lives in `PluginProcessor` (cross-channel, mono-summed), not per-engine — same
   category as the limiter.
-- **`revFeed`'s ±1 clamp on the injected wet is load-bearing.** The feedback tap is
-  *pre-limiter*, so nothing else bounds the loop; without the clamp it grows
-  exponentially at high decay / low loss (the worst-case test measured ~1e32). Clamped,
-  the worst case degenerates to the documented eternal-hold linear growth, and the
-  limiter caps the output. Don't remove it, and don't "fix" it with a hidden compressor.
+- **`revFeed` (reverb→hold feedback) was removed — don't re-add it via the input path.**
+  It shipped, was stable, and was inaudible anyway: the re-injected wet entered the engine
+  through the same input path as live audio, whose injection strength is multiplied by
+  the **Feed** knob inside `SpectralEngine`. With Feed low/zero (the normal frozen-hold
+  case this knob was meant for), the injected wet was scaled to near-nothing before it
+  could do anything audible. A real version of this feature needs a second, Feed-independent
+  input path into the engine — that's an engine-level change, not a processor tweak; don't
+  attempt it as a quick revival of the old `revFeedG` block.
 
 ## East–West location field (exp/eastwest, plan v2 — continuous locations)
 - **v1 (16 slots + normalised blend) was ripped out on purpose** — it produced audible

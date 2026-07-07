@@ -98,15 +98,9 @@ private:
     std::atomic<float>* pRevSize     = nullptr;
     std::atomic<float>* pRevDamp     = nullptr;
     std::atomic<float>* pRevPredelay = nullptr;
-    std::atomic<float>* pRevFeed     = nullptr;
     PlateReverb reverb;
     std::vector<float> revMono, revWetL, revWetR;
     float prevRevMix = 0.0f; // to detect the 1->0 transition and reset the tail
-
-    // revFeed: last block's raw wet (still sitting in revWetL/R) is re-injected into
-    // the engines' input next block, so the reverb tail becomes part of the held
-    // sound. The one-block feedback delay is inherent and fine.
-    int revFeedCount = 0; // valid samples of last-block wet in revWetL/R
 
     // spectral shaper (replaces the old filter + compress)
     std::atomic<float>* pShapeAmt   = nullptr;

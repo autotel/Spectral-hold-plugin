@@ -38,7 +38,6 @@ is over (Ableton-style).
 | Size `revSize`       | 0.5 .. 2.0     | 1.0     | Scales the tank delay lengths (room size). Moving it live gently pitch-bends the tail (by design). |
 | Damp `revDamp`       | 0 .. 1         | 0.3     | One-pole damping inside the tank: 0 = bright, 1 = dark. |
 | Predelay `revPredelay` | 0 .. 250 ms  | 20      | Delay before the reverb's input diffusers. |
-| Feed `revFeed`       | 0 .. 1         | 0.0     | The reverb's *integration* knob: last block's wet (clamped ±1, ×0.5) re-injected into the engines' input, so the tail becomes part of the held sound. Active only while `revMix > 0`. |
 | FT Size (GUI only)  | 1024 .. 8192   | 4096    | FFT size. `ComboBox`, powers of two. Not a DAW parameter. |
 | Live / 0 PDC (GUI only) | bool       | off     | Reports **0 latency** to the host (no plugin delay compensation) for live use. The real STFT latency is unchanged; the host just stops delay-compensating. |
 

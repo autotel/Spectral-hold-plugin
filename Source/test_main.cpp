@@ -662,65 +662,6 @@ int main()
         fails += ok ? 0 : 1;
     }
 
-    // revFeed: engine + reverb + feedback loop composed exactly like the processor
-    // (mono engine, wet re-injected next block scaled by 0.5 * revFeed).
-    // (a) integration: with revFeed the reverb tail is re-captured by the hold, so
-    //     held energy after input stops is higher than without.
-    // (b) worst-case stability: feed=1, loss=0, revFeed=1, revDecay=1 -> 2 s noise
-    //     then 30 s silence stays finite and bounded (the processor's limiter isn't
-    //     in this loop, so the loop itself must not run away).
-    {
-        auto runLoop = [&] (float revFeed, float loss, float revDecay, bool noiseIn,
-                            double holdSeconds, float& heldRms, float& maxAbs)
-        {
-            SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
-            PlateReverb rv; rv.prepare (sr);
-            rv.setParams (revDecay, 1.0f, 0.3f, 0.02f);
-            SpectralEngine::Params fp; fp.feed = 1.0f; fp.loss = loss;
-            juce::Random rng (7);
-            std::vector<float> b (block), wl (block, 0.0f), wr (block, 0.0f);
-            maxAbs = 0.0f; heldRms = 0.0f;
-            double ph = 0.0, w = 2.0 * M_PI * 660.0 / sr;
-            const int feedBlocks = (int) (2.0 * sr / block);
-            const int holdBlocks = (int) (holdSeconds * sr / block);
-            for (int blk = 0; blk < feedBlocks + holdBlocks; ++blk)
-            {
-                for (int i = 0; i < block; ++i)
-                {
-                    float x = 0.0f;
-                    if (blk < feedBlocks)
-                        x = noiseIn ? rng.nextFloat() * 1.6f - 0.8f
-                                    : 0.5f * (float) std::sin (ph);
-                    ph += w;
-                    // inject last wet, clamped to +/-1 exactly like the processor does
-                    b[(size_t) i] = x + 0.5f * revFeed * juce::jlimit (-1.0f, 1.0f, wl[(size_t) i]);
-                }
-                e2.process (b.data(), b.data(), block, fp);
-                rv.process (b.data(), wl.data(), wr.data(), block); // wet of the output
-                for (int i = 0; i < block; ++i) maxAbs = juce::jmax (maxAbs, std::abs (b[(size_t) i]));
-                if (! finiteAll (b.data(), block)) { maxAbs = 1.0e30f; return; }
-                if (blk == feedBlocks + holdBlocks - 1) heldRms = rms (b.data(), block);
-            }
-        };
-
-        float rmsOff, rmsOn, mxOff, mxOn;
-        runLoop (0.0f, 0.4f, 0.8f, false, 2.0, rmsOff, mxOff);
-        runLoop (1.0f, 0.4f, 0.8f, false, 2.0, rmsOn,  mxOn);
-        bool okInt = std::isfinite (rmsOn) && rmsOn > rmsOff * 1.5f;
-        printf ("[%s] revFeed integrates tail: heldRMS off=%.2e on=%.2e\n",
-                okInt ? "PASS" : "FAIL", rmsOff, rmsOn);
-        fails += okInt ? 0 : 1;
-
-        // At loss=0 the held state accumulates the clamped injection linearly (the
-        // documented eternal-hold behavior; the processor's limiter caps the output).
-        // The assertion is "no exponential runaway": unclamped feedback hit ~1e32 here.
-        float rmsWc, mxWc;
-        runLoop (1.0f, 0.0f, 1.0f, true, 30.0, rmsWc, mxWc);
-        bool okStab = mxWc < 500.0f;
-        printf ("[%s] revFeed worst-case stability: maxAbs=%.3f\n", okStab ? "PASS" : "FAIL", mxWc);
-        fails += okStab ? 0 : 1;
-    }
-
     // ---- East<->West location field (agent-wiki/plan-eastwest.md §8) ----
 
     auto ewBin = [&] (float hz) { return (int) std::lround ((double) hz * 4096.0 / sr); };

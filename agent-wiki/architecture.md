@@ -6,9 +6,11 @@
   limiter. `processBlock` reads params → runs each channel engine in place → output gain →
   reverb (mono-summed, wet/dry mixed back in) → limiter.
 - `SpectralEngine.{h,cpp}` — the DSP core. Self-contained STFT spectral-hold engine.
-  Depends only on `juce_dsp`, so it builds and is tested without a plugin host. Holds the
-  sound across **16 East–West location slots** (2-D `[frequency, location]` field); the
-  `ewLocation` param picks the active slot and blends the output (see dsp-design.md).
+  Depends only on `juce_dsp`, so it builds and is tested without a plugin host. Every held
+  bin/tone carries a continuous East–West location (`binLoc[k]`); the `ewLocation` param
+  is a listener/recorder position whose distance to each tone sets an absolute (never
+  normalised) playback and edit-strength attenuation (see dsp-design.md — this replaced an
+  earlier 16-slot design; don't resurrect slots).
 - `PlateReverb.{h,cpp}` — the output reverb (Dattorro plate topology). Same host-free
   contract as `SpectralEngine` (`juce_dsp` only, unit-testable). Cross-channel like the
   limiter — lives in the processor, not per-engine. See
@@ -25,15 +27,12 @@
         ┌--(dry, delayed fftSize)--------──┐
 input ──> [engine L] ──┐                   v
 input ──> [engine R] ──┤─> dry/wet mix ─> output gain ─> plate reverb ─> linked limiter ─> out
-        ^              (per-channel)                     (mono-sum in,   (cross-channel)
-        └──(revFeed: last block's wet, clamped ±1)───────┘ stereo out)
+                       (per-channel)                     (mono-sum in, stereo out)
 ```
 Each engine: sliding ring buffers → per-hop STFT frame → held-phasor update → IFFT →
 overlap-add. See [dsp-design.md](dsp-design.md). The reverb is a hard bypass at
-`revMix = 0` and `revFeed` only runs while the reverb does (see [gotchas.md](gotchas.md)).
-The dry path (`DryDelay.h`) is a plain ring delayed by the engine's `fftSize` so
-dry and wet stay time-aligned; captured *before* the revFeed injection, so it is
-genuinely untouched input.
+`revMix = 0` (see [gotchas.md](gotchas.md)). The dry path (`DryDelay.h`) is a plain ring
+delayed by the engine's `fftSize` so dry and wet stay time-aligned.
 
 ## Threading model
 - **Audio thread:** `processBlock` → engines → limiter. No allocations (buffers

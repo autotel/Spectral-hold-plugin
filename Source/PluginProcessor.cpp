@@ -5,7 +5,6 @@ namespace
 {
     constexpr float kLimAttMs = 5.0f;     // limiter attack (catch peaks)
     constexpr float kLimRelMs = 1200.0f;  // limiter release (slow envelope)
-    constexpr float kRevFeedScale = 0.5f; // headroom on the reverb->hold feedback loop
 }
 
 SpectralHoldProcessor::SpectralHoldProcessor()
@@ -38,7 +37,6 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pRevSize     = apvts.getRawParameterValue ("revSize");
     pRevDamp     = apvts.getRawParameterValue ("revDamp");
     pRevPredelay = apvts.getRawParameterValue ("revPredelay");
-    pRevFeed     = apvts.getRawParameterValue ("revFeed");
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::createLayout()
@@ -137,10 +135,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "revPredelay", 1 }, "Reverb Predelay",
         NormalisableRange<float> (0.0f, 250.0f, 0.0f, 0.35f), 20.0f)); // ms, log-ish skew
 
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "revFeed", 1 }, "Reverb Feed",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // wet fed back into the hold input
-
     return layout;
 }
 
@@ -228,36 +222,17 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     if ((int) dryScratch.size() < numSamples)
         dryScratch.resize ((size_t) numSamples);
 
-    // revFeed: re-inject last block's reverb wet into the engines' input, AFTER the
-    // dry capture (the dry path stays untouched input) and only while the reverb is
-    // active. The tail gets re-captured by the hold and becomes part of the held sound.
-    const float revFeedG = (pRevMix->load() > 0.0f && revFeedCount > 0)
-                             ? pRevFeed->load() * kRevFeedScale : 0.0f;
-
+    for (int ch = 0; ch < juce::jmin (numCh, (int) engines.size()); ++ch)
     {
-        for (int ch = 0; ch < juce::jmin (numCh, (int) engines.size()); ++ch)
+        auto* d = buffer.getWritePointer (ch);
+        auto& eng = engines[(size_t) ch];
+        dryDelay[(size_t) ch].process (d, dryScratch.data(), numSamples, eng.getLatency());
+        eng.process (d, d, numSamples, p); // in place: capture dry BEFORE this
+        if (dryWet < 1.0f)
         {
-            auto* d = buffer.getWritePointer (ch);
-            auto& eng = engines[(size_t) ch];
-            dryDelay[(size_t) ch].process (d, dryScratch.data(), numSamples, eng.getLatency());
-            if (revFeedG > 0.0f)
-            {
-                // The feedback tap is pre-limiter, so the loop must bound itself:
-                // clamp the injected wet to +/-1. Without this the loop can grow
-                // exponentially at high decay/low loss (verified by the worst-case
-                // stability test); with it, injection is no hotter than normal input.
-                const float* wet = (ch % 2 == 0) ? revWetL.data() : revWetR.data();
-                const int nInj = juce::jmin (numSamples, revFeedCount);
-                for (int n = 0; n < nInj; ++n)
-                    d[n] += revFeedG * juce::jlimit (-1.0f, 1.0f, wet[n]);
-            }
-            eng.process (d, d, numSamples, p); // in place: capture dry BEFORE this
-            if (dryWet < 1.0f)
-            {
-                const float wetG = dryWet, dryG = 1.0f - dryWet;
-                for (int n = 0; n < numSamples; ++n)
-                    d[n] = d[n] * wetG + dryScratch[(size_t) n] * dryG;
-            }
+            const float wetG = dryWet, dryG = 1.0f - dryWet;
+            for (int n = 0; n < numSamples; ++n)
+                d[n] = d[n] * wetG + dryScratch[(size_t) n] * dryG;
         }
     }
 
@@ -274,7 +249,6 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     {
         if (prevRevMix > 0.0f)
             reverb.reset();
-        revFeedCount = 0; // no stale wet injected when mix comes back up
     }
     else
     {
@@ -306,7 +280,6 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
             for (int n = 0; n < numSamples; ++n)
                 d[n] = d[n] * dryGain + wet[n] * wetGain;
         }
-        revFeedCount = numSamples; // raw wet stays in revWetL/R for next block's revFeed
     }
     prevRevMix = revMix;
 
