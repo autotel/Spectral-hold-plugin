@@ -4,16 +4,16 @@ DAW-facing parameters are defined in `SpectralHoldProcessor::createLayout()`.
 The engine consumes them via `SpectralEngine::Params`. FFT size is separate (GUI-only).
 
 **Creation order = host page order.** Push/Maschine bank 8 consecutive params per page, so
-`createLayout()` order is the grouping. `ewLocation` was inserted after Loss, so page 1
-now holds 9 params (Feed, Loss, E↔W, Dry/Wet, Output, Phase Noise, Harmonize, Harm Width,
-Harmonic) — the macro-page re-grouping across all pages is a **later pass** (the user
-deferred it); don't treat the current split as final.
+`createLayout()` order is the grouping. `ewLocation`, `limThreshold` and `limRelease` were
+added after Loss/Phase Noise, so page 1 now holds 11 params — the macro-page re-grouping
+across all pages is a **later pass** (the user deferred it); don't treat the current split
+as final.
 
 **Editor layout (tabs, not a knob wall):** the display on top; a persistent performance
-row **Feed, Loss, E↔W, Dry/Wet, Output**; a tab strip **Shaper | Harmonize | Reverb**
-switching one shared knob row; the utility row (Phase Noise, Live, Brush, FT Size); and an
-**info bar** at the bottom that shows a one-line description of whatever control the mouse
-is over (Ableton-style).
+row **Feed, Loss, E↔W, Dry/Wet, Output, Thresh, Release**; a tab strip
+**Shaper | Harmonize | Reverb** switching one shared knob row; the utility row (Phase
+Noise, Live, Brush, FT Size); and an **info bar** at the bottom that shows a one-line
+description of whatever control the mouse is over (Ableton-style).
 
 | GUI / id            | Range          | Default | Meaning / mapping |
 |---------------------|----------------|---------|-------------------|
@@ -22,6 +22,8 @@ is over (Ableton-style).
 | E↔W `ewLocation`    | 0 .. 1         | 0.0     | Listener/recorder position on the continuous East–West line. Held tones carry their own location; they are heard through an absolute gaussian distance attenuation, input is deposited at the knob (pulling the fed tone's location), and edits reach nearest tones hardest. Parked at 0 (default) = exact legacy behaviour. See [dsp-design.md](dsp-design.md). |
 | Dry/Wet `dryWet`    | 0 .. 1         | 1.0     | Global mix: engine output (1) vs untouched input (0). The dry path is delayed by `fftSize` (`DryDelay.h`) so it stays time-aligned with the wet. 1 = bit-exact wet-only (skip). |
 | Output `output`     | 0 .. 2         | 1.0     | Final output level (linear gain), applied **before** the limiter so it still protects ±1. |
+| Thresh `limThreshold` | -24 .. 0 dB  | 0       | Output limiter ceiling. The linked limiter pulls the level down to this; at the default 0 dB it's exactly the old fixed "don't clip ±1" behaviour. |
+| Release `limRelease` | 50 .. 5000 ms | 1200   | How fast the limiter recovers after pulling down. Attack is fixed (5 ms, not exposed) — always fast enough to catch peaks. |
 | Phase Noise `phaseNoise` | bool      | off     | When on, injects ±`kPhaseNoise` rad of per-frame random jitter into each bin's phase advance (shimmer/roughness). Non-accumulating — does not permanently detune. |
 | Harmonize `harmonize` | 0 .. 0.1   | 0.0     | Master amount of coupled-oscillator pitch interaction. See [harmonize.md](harmonize.md). Inherently *permanent* (no mode knob — see gotchas.md). |
 | Width `harmWidth`     | 0.01 .. 3 oct | 0.5  | σ of the nearness-influence curve. |

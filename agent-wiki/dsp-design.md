@@ -141,13 +141,21 @@ audio thread in `drainBrush()` (at a frame boundary, under a try-lock — never 
   samples). The offline brush test flushes >fftSize samples before measuring.
 
 ## Limiter (in `PluginProcessor`, not the engine)
-Linked across channels so the stereo image is preserved.
+Linked across channels so the stereo image is preserved. Two DAW-facing params:
+`limThreshold` (dB, -24..0, default 0) and `limRelease` (ms, 50..5000, default 1200);
+attack stays fixed at `kLimAttMs = 5 ms` (not exposed — always fast enough to catch peaks).
 - `peak = max over channels of |sample|`.
-- `limEnv` follows `peak` (one-pole): fast attack `kLimAttMs = 5 ms`, slow release
-  `kLimRelMs = 1200 ms`.
-- `target = (limEnv > 1) ? 1/limEnv : 1`. So gain is **1.0 until the signal would clip**.
-- `limGain` eases toward `target` (fast when reducing, slow when recovering) and multiplies
-  every channel. Result: transparent under -1..1, gentle slow pull-down above it.
+- `limEnv` follows `peak` (one-pole): fast attack, release from `limRelease`
+  (`limRelCoef` recomputed once per block from the param — cheap, one `exp` per block).
+- `thr = decibelsToGain(limThreshold)`. `target = (limEnv > thr) ? thr/limEnv : 1`. Gain is
+  **1.0 until the signal would exceed the threshold** (at the default 0 dB this is exactly
+  the old fixed "don't clip ±1" behaviour).
+- `limGain` eases toward `target` (fast when reducing, slow when recovering per
+  `limRelease`) and multiplies every channel. Result: transparent under the threshold,
+  gentle pull-down above it at the chosen release speed.
+- Tested against a synthetic peak train in `test_main.cpp` (the limiter lives in the
+  processor, not the engine, so the test replicates the 5-line envelope math rather than
+  linking `PluginProcessor` into the test target).
 
 ## East–West location field (continuous tone locations, plan v2)
 Every bin/tone carries a **continuous location** `binLoc[k] ∈ [0,1]` alongside `S`/`omega`/

@@ -29,8 +29,11 @@ Read this before "fixing" something that looks wrong — it probably isn't.
 ## Limiter
 - Lives in `PluginProcessor`, **linked across channels** (one gain for both) to keep the
   image. Per-engine limiting would smear stereo.
-- Gain is exactly 1.0 below clipping by construction (`target=1` while `limEnv<=1`). The
-  release is deliberately slow (~1.2 s) per spec — don't speed it up to "tighten" it.
+- Gain is exactly 1.0 below the threshold by construction (`target=1` while
+  `limEnv<=thr`). Threshold (`limThreshold`, dB) and release (`limRelease`, ms) are now
+  user params — 0 dB / 1200 ms are just the defaults, not fixed constants; the release
+  coefficient is recomputed once per block from the param. Attack stays fixed
+  (`kLimAttMs = 5`, not exposed) — it must stay fast to actually catch peaks.
 
 ## FFT size
 - It is **GUI-only**: a `ComboBox`, not an APVTS parameter (spec: "perhaps not presented to

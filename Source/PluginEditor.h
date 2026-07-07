@@ -35,7 +35,7 @@ private:
     SpectrumDisplay display;
 
     // persistent row (always visible)
-    Knob feed, loss, ewLocation, dryWet, output;
+    Knob feed, loss, ewLocation, dryWet, output, limThreshold, limRelease;
 
     // tabbed rows (one visible at a time)
     Knob shapeAmt, shapeMode, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel;

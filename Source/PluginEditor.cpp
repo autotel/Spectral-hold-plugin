@@ -12,6 +12,8 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (ewLocation, "ewLocation", "E<->W");
     setupKnob (dryWet,     "dryWet",     "Dry/Wet");
     setupKnob (output,     "output",     "Output");
+    setupKnob (limThreshold, "limThreshold", "Thresh");
+    setupKnob (limRelease,   "limRelease",   "Release");
 
     // tabbed rows
     setupKnob (shapeAmt,   "shapeAmt",   "Amount");
@@ -98,6 +100,8 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setInfo (ewLocation.slider, "Walk the East-West line: tones are recorded at this position and heard louder the closer you are. Set Feed to 0 to walk without recording.");
     setInfo (dryWet.slider,     "Balance of untouched input vs the spectral hold output.");
     setInfo (output.slider,     "Output level, before the safety limiter.");
+    setInfo (limThreshold.slider, "Output ceiling. The slow limiter pulls the level down to this.");
+    setInfo (limRelease.slider,   "How fast the limiter recovers after pulling down.");
     setInfo (shapeAmt.slider,   "Shaper depth: scales the whole curve.");
     setInfo (shapeMode.slider,  "Shaper: momentary (out-only, reversible) vs permanent (etched into the held sound).");
     setInfo (shape.slider,      "Morphs the curve: Level, Sigmoid, Spikes, Harmonics, Sine.");
@@ -213,8 +217,8 @@ void SpectralHoldEditor::resized()
 
     // persistent row: the performance knobs, always visible
     auto row1 = controls.removeFromTop ((controls.getHeight() - 28) / 2);
-    Knob* row1Knobs[] = { &feed, &loss, &ewLocation, &dryWet, &output };
-    layoutRow (row1, row1Knobs, 5);
+    Knob* row1Knobs[] = { &feed, &loss, &ewLocation, &dryWet, &output, &limThreshold, &limRelease };
+    layoutRow (row1, row1Knobs, 7);
 
     // tab strip
     auto tabs = controls.removeFromTop (28).reduced (0, 2);

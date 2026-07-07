@@ -3,8 +3,7 @@
 
 namespace
 {
-    constexpr float kLimAttMs = 5.0f;     // limiter attack (catch peaks)
-    constexpr float kLimRelMs = 1200.0f;  // limiter release (slow envelope)
+    constexpr float kLimAttMs = 5.0f;     // limiter attack (catch peaks) -- fixed, not a param
 }
 
 SpectralHoldProcessor::SpectralHoldProcessor()
@@ -19,6 +18,8 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pDryWet = apvts.getRawParameterValue ("dryWet");
     pOutput = apvts.getRawParameterValue ("output");
     pPhaseNoise = apvts.getRawParameterValue ("phaseNoise");
+    pLimThreshold = apvts.getRawParameterValue ("limThreshold");
+    pLimRelease   = apvts.getRawParameterValue ("limRelease");
 
     pShapeAmt   = apvts.getRawParameterValue ("shapeAmt");
     pShapeMode  = apvts.getRawParameterValue ("shapeMode");
@@ -71,6 +72,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
 
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "phaseNoise", 1 }, "Phase Noise", false));
+
+    // Output limiter (post-everything safety ceiling; see agent-wiki/dsp-design.md)
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "limThreshold", 1 }, "Limiter Threshold",
+        NormalisableRange<float> (-24.0f, 0.0f), 0.0f)); // dB ceiling
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "limRelease", 1 }, "Limiter Release",
+        NormalisableRange<float> (50.0f, 5000.0f, 0.0f, 0.4f), 1200.0f)); // ms, skewed
 
     // Harmonize (coupled-oscillator tone interaction; see agent-wiki/harmonize.md)
     layout.add (std::make_unique<AudioParameterFloat> (
@@ -149,7 +159,7 @@ void SpectralHoldProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     setLatencySamples (liveMode ? 0 : (1 << fftOrder.load()));
 
     limAttCoef = 1.0f - std::exp (-1.0f / (kLimAttMs * 0.001f * (float) sampleRate));
-    limRelCoef = 1.0f - std::exp (-1.0f / (kLimRelMs * 0.001f * (float) sampleRate));
+    limRelCoef = 1.0f - std::exp (-1.0f / (pLimRelease->load() * 0.001f * (float) sampleRate));
     limEnv = 0.0f;
     limGain = 1.0f;
     prepared = true;
@@ -283,7 +293,11 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     }
     prevRevMix = revMix;
 
-    // --- slow linked limiter: lower gain only when peak would exceed +/-1
+    // --- output limiter: lower gain only when peak would exceed the threshold.
+    // Release recomputed per block from the param (attack stays fixed, kLimAttMs).
+    limRelCoef = 1.0f - std::exp (-1.0f / (pLimRelease->load() * 0.001f * (float) getSampleRate()));
+    const float thr = juce::Decibels::decibelsToGain (pLimThreshold->load());
+
     for (int n = 0; n < numSamples; ++n)
     {
         float peak = 0.0f;
@@ -293,7 +307,7 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         const float coef = (peak > limEnv) ? limAttCoef : limRelCoef;
         limEnv += (peak - limEnv) * coef;
 
-        const float target = (limEnv > 1.0f) ? (1.0f / limEnv) : 1.0f;
+        const float target = (limEnv > thr) ? (thr / limEnv) : 1.0f;
         const float gcoef  = (target < limGain) ? limAttCoef : limRelCoef;
         limGain += (target - limGain) * gcoef;
 

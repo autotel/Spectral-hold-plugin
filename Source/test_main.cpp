@@ -851,6 +851,72 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // ---- output limiter (Threshold + Release params, agent-wiki/plan-fixes.md §4) ----
+    // The limiter lives in PluginProcessor, not the engine, so this replicates its exact
+    // envelope math (5 lines, mirrored from processBlock) against a synthetic peak train
+    // rather than linking the processor into this test target.
+    {
+        // peakLevel is held for holdBlocks blocks (long enough to converge), then silence
+        // for the remaining blocks; gainAtEndOfHold / gainAfterRelease sample those points.
+        auto runLimiter = [&] (float thresholdDb, float releaseMs, float peakLevel,
+                               int holdBlocks, int releaseBlocks,
+                               float& gainAtEndOfHold, float& gainAfterRelease)
+        {
+            const float kLimAttMs = 5.0f;
+            const float limAttCoef = 1.0f - std::exp (-1.0f / (kLimAttMs * 0.001f * (float) sr));
+            const float limRelCoef = 1.0f - std::exp (-1.0f / (releaseMs * 0.001f * (float) sr));
+            const float thr = std::pow (10.0f, thresholdDb / 20.0f);
+
+            float limEnv = 0.0f, limGain = 1.0f;
+            const int total = holdBlocks + releaseBlocks;
+            for (int blk = 0; blk < total; ++blk)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    const float peak = (blk < holdBlocks) ? peakLevel : 0.0f;
+                    const float coef = (peak > limEnv) ? limAttCoef : limRelCoef;
+                    limEnv += (peak - limEnv) * coef;
+                    const float target = (limEnv > thr) ? (thr / limEnv) : 1.0f;
+                    const float gcoef  = (target < limGain) ? limAttCoef : limRelCoef;
+                    limGain += (target - limGain) * gcoef;
+                }
+                if (blk == holdBlocks - 1) gainAtEndOfHold = limGain;
+            }
+            gainAfterRelease = limGain;
+        };
+
+        // 1) threshold lowers the settled gain: -6 dB thr should reduce gain more than 0 dB
+        // (holdBlocks=60 -> ~320 ms, plenty to converge past even the slow 1200 ms release
+        // since attack governs while limEnv/limGain are still rising toward the peak)
+        float g0, gEnd0, g6, gEnd6;
+        runLimiter (0.0f, 1200.0f, 1.5f, 60, 5, g0, gEnd0);
+        runLimiter (-6.0f, 1200.0f, 1.5f, 60, 5, g6, gEnd6);
+        bool okThr = g6 < g0 * 0.9f;
+        printf ("[%s] limiter threshold: settled gain@thr0dB=%.3f gain@thr-6dB=%.3f\n",
+                okThr ? "PASS" : "FAIL", g0, g6);
+        fails += okThr ? 0 : 1;
+
+        // 2) release speed: after the peak ends, a fast release recovers toward unity gain
+        // faster than a slow one, measured the same number of blocks later.
+        float gFastHold, gFastEnd, gSlowHold, gSlowEnd;
+        runLimiter (-6.0f, 50.0f,   1.5f, 60, 20, gFastHold, gFastEnd);
+        runLimiter (-6.0f, 3000.0f, 1.5f, 60, 20, gSlowHold, gSlowEnd);
+        bool okRel = gFastEnd > gSlowEnd * 1.2f && gFastEnd <= 1.0f + 1.0e-4f;
+        printf ("[%s] limiter release: fast-release gain=%.4f slow-release gain=%.4f (after silence)\n",
+                okRel ? "PASS" : "FAIL", gFastEnd, gSlowEnd);
+        fails += okRel ? 0 : 1;
+
+        // 3) default (0 dB, 1200 ms) matches the pre-limiter-params legacy behaviour:
+        // transparent under +/-1, only pulls down (settled, well past the attack) above it.
+        float gUnderHold, gUnderEnd, gOverHold, gOverEnd;
+        runLimiter (0.0f, 1200.0f, 0.8f, 60, 5, gUnderHold, gUnderEnd);
+        runLimiter (0.0f, 1200.0f, 2.0f, 60, 5, gOverHold, gOverEnd);
+        bool okDefault = gUnderHold > 0.999f && gOverHold < 0.6f;
+        printf ("[%s] limiter default transparent under threshold: under=%.4f over=%.4f\n",
+                okDefault ? "PASS" : "FAIL", gUnderHold, gOverHold);
+        fails += okDefault ? 0 : 1;
+    }
+
     printf ("\n%s (%d failure%s)\n", fails == 0 ? "ALL PASS" : "FAILURES",
             fails, fails == 1 ? "" : "s");
     return fails == 0 ? 0 : 1;
