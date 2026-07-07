@@ -1,11 +1,13 @@
 # PLAN — fix-list pass (branch `exp/integration`, for Sonnet)
 
-**Status: NOT implemented — this is the plan.** Work directly on `exp/integration`
-(`exp/eastwest` is already merged in). House rules: `./build.sh` green after every step,
-update the wiki pages in the same step, commit per step. **Do not modify
-`SpectralEngine.{h,cpp}` or `ShapeCurves.h`** — everything below is processor/reverb/GUI/
-wiki. Do not change the Dattorro delay/tap constants in `PlateReverb.cpp` (the Metal knob
-maps onto gains/excursion only, §5).
+**Status: implemented** (all of §1–§11, done on Sonnet 5 per the handoff). `./build.sh`
+green, 33/33 tests. `SpectralEngine.{h,cpp}`/`ShapeCurves.h` were untouched in this pass
+(as required) — the bipolar shaper rework listed under "already done" below predates the
+handoff. One deviation worth flagging: the Metal knob's test (§5) couldn't confirm the
+"sounds more metallic" *direction* — two different synthetic proxies gave contradicting
+signal when actually measured, so the shipped test only asserts stability + that the knob
+isn't a no-op (see gotchas.md). Current behavior is documented across dsp-design.md /
+parameters.md / architecture.md / gotchas.md; this file stays as the historical work log.
 
 ## Already done this session (context, don't redo)
 - Bipolar net-zero shaper curves (Sigmoid = tilt; Spikes/Harmonics = ± combs), permanent

@@ -7,6 +7,13 @@ live behavior lives in `Source/ShapeCurves.h` / `SpectralEngine.cpp`; see
 [dsp-design.md](dsp-design.md#the-spectral-shaper) and [parameters.md](parameters.md)
 for the current, maintained description.
 
+**Later update (exp/integration, plan-fixes.md §2/§11):** Sigmoid/Spikes/Harmonics were
+made **bipolar / zero-mean** (were cut-only here) so a permanent edit is reversible in
+principle, with a boost self-limit so compounding a boost stays bounded; the Level shape's
+Width/Count meanings were swapped (Width = extent, Count = warp — more intuitive). The
+math below describes the **original, cut-only** version; see dsp-design.md for what
+actually runs now.
+
 ## 1. What the feature is
 
 A per-bin amplitude shaper driven by math curves over the (log-frequency) spectrum.

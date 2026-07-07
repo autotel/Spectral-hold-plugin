@@ -79,44 +79,64 @@ elsewhere** (the old filter bell drifted between DSP and GUI once; don't repeat 
 
 Each bin gets a signed change `L[k] ∈ [-1..+1]` from `ShapeCurves::shapeL(shape, x, x0,
 width, count, level, ratio)`, where `x = log2(binFreq)`, `x0 = log2(shapeFreq)`. `shape`
-(0..4) linearly cross-fades between two adjacent named shapes:
+(0..4) linearly cross-fades between two adjacent named shapes (and the `shape` param's
+display textbox shows the name(s), not the raw float — see `shapeValueToString` in
+`PluginProcessor.cpp`). **All five shapes are bipolar / zero-mean by construction**
+(`L=0` on average across the spectrum) so a permanent edit is always reversible in
+principle, not just a one-way cut — see "the boost self-limit" below for why that's safe
+to compound:
 
 - **Level** (0, replaces Compress): `L = level·sign(u)·|u|^γ · win(x)`, where
   `u = ln(ratio)/4.6`, `ratio = |S[k]|/mean(active bins)` (same active-bin pivot as the
   old Compress — bins ≤ `maxMag·1e-3` get `ratio=1` → `L=0`, leaving the noise floor
-  alone), `γ = 2^((width-0.5)·2)` (width=0.5 → γ=1, the compress-equivalent 1:1 case),
-  and `win(x)` a gaussian window in log-freq centred at `shapeFreq` that flattens to 1
-  everywhere as `count → 1` (so Freq is inert at the default `count=1`).
-- **Sigmoid** (1): `L = level·(tanh((x-x0)/wOct) ∓ 1)/2` — cut-only, continuous through
-  `level=0` (flat). `level>0` cuts below `x0` (highpass), `level<0` cuts above (lowpass).
-  `count` unused in v1.
-- **Spikes** (2): a gaussian spike comb `env ∈ [0..1]` at `x0 + n·d`, `n=0,±1,±2,…`,
-  amplitude fading in per spike-pair as `count` grows (smooth 1-spike → many-spikes). It's
-  **purely subtractive** and sign-split like the Sigmoid: `level>0 → L = -level·env`
-  (reject/notch the peaks), `level<0 → L = level·(1-env)` (pass **only** the peaks, cut
-  everything between), flat no-op at `level=0`. Always attenuates (`L ≤ 0`).
-- **Harmonics** (3): spikes at `x0 ± log2(n)`, `n=1,2,3,…` — overtones (`n·f0`) on the `+`
-  side, undertones (`f0/n`) on the `-` side, fundamental shared at `n=1`. Same
-  subtractive sign-split as Spikes (`level>0` rejects/notches the harmonic series,
-  `level<0` passes only the series — isolates everything harmonically related to
-  `shapeFreq`). Per bin only the 2 nearest harmonics on that side are evaluated (cheap,
-  same trick as Spikes); each harmonic's gaussian half-width is clamped to
-  `0.3·log2((n+1)/n)` (the local spacing) so high harmonics stay distinct instead of
-  smearing together. `count` controls how many overtone/undertone pairs are active
-  (0 = fundamental only, 1 = 12 pairs/side — same slow ramp as Spikes' `count`).
+  alone). **Post-#14 remap: `Width` sets the gaussian window extent** (`win(x)`, flattens
+  to 1 everywhere as `width → 1` — the more intuitive control, since it's what visibly
+  changes the affected band), **`Count` sets the extremes-vs-mean warp** `γ =
+  2^((count-0.5)·2)` (`count=0.5` → γ=1, the compress-equivalent 1:1 case). (Before #14
+  these two were swapped: Width was the warp, Count the extent.)
+- **Sigmoid** (1): `L = level·tanh((x-x0)/wOct)` — a **bipolar tilt**: `level>0` boosts
+  above `x0` and cuts below by the same shape (antisymmetric), `level<0` the reverse,
+  continuous through `level=0` (flat). Was cut-only pre-bipolar-rework (`(tanh∓1)/2`);
+  now nets to zero and a permanent tilt is genuinely undoable by re-tilting the other way.
+  `count` unused.
+- **Spikes** (2): a **bipolar comb** — gaussian "teeth" at `x0 + n·d` and equal, opposite
+  "anti-teeth" at the geometric midpoints `x0 + (n+0.5)·d`, `n=0,±1,±2,…`, amplitude
+  fading in per pair as `count` grows. `L = level·(teeth_env − antiteeth_env)`, each env
+  clamped to `[0,1]`. `level>0` boosts the teeth and cuts the gaps, `level<0` the reverse;
+  zero-mean by construction (was subtractive-only pre-rework: `level>0` used to *notch*
+  peaks, `level<0` used to *isolate* them, always `L≤0`).
+- **Harmonics** (3): teeth at `x0 ± log2(n)`, `n=1,2,3,…` (overtones `n·f0` on `+`,
+  undertones `f0/n` on `-`, fundamental shared at `n=1`), anti-teeth at the geometric
+  midpoint between consecutive harmonics on each side. Same bipolar construction and sign
+  convention as Spikes: `level>0` boosts the harmonic series and cuts between,
+  `level<0` the reverse. Per bin only the 2–3 nearest harmonics are evaluated (cheap, same
+  trick as Spikes); each harmonic's gaussian half-width is clamped to `0.3·log2((n+1)/n)`
+  (local spacing) so high harmonics stay distinct. `count` controls how many
+  overtone/undertone pairs are active (0 = fundamental only, 1 = 12 pairs/side).
 - **Sine** (4, replaces Filter): `L = level·cos(2π·ρ·(x-x0))·env(x)`, `ρ` cycles/octave
-  from `width`, `env` a gaussian window like Level's that flattens as `count → 1`. At
+  from `width`, `env` a gaussian window like Level's that flattens as `count → 1`. Already
+  bipolar (a cosine is zero-mean over a full cycle) — unchanged by the rework. At
   `level=-1, count≈0` this is a single bell cut = the old filter.
 
 **Applying L[k]** (`processFrame`, per bin, `t = shapeAmt·L[k]`, `m = shapeMode`):
-- **Permanent** (compounds, replaces Compress): `S[k] *= exp(t · m · kPermScale)`
-  (`kPermScale = 0.23`). At `shape=0, width=0.5, count=1, mode=1, amount=1` this is
-  *exactly* `ratio ^ (level·0.05)` — bit-identical to the old Compress formula (the two
-  constants 4.6 and 0.23 are coupled; don't change one without the other).
+- **Permanent** (compounds): `S[k] *= exp(t · m · kPermScale · att)` (`kPermScale = 0.23`;
+  `att` is the East–West distance attenuation, 1 at the default `ewLocation=0`). At
+  `shape=0, count=0.5, width=1, mode=1, amount=1` (post-#14 mapping) this is *exactly*
+  `ratio ^ (level·0.05)` — bit-identical to the old Compress formula (the constants 4.6
+  and 0.23 are coupled; don't change one without the other).
+  - **The boost self-limit** (`kPermCeilNorm`): since the shapes are now bipolar, `L>0`
+    means the permanent edit can *boost* a bin, and `exp(+)` compounding every frame would
+    grow without bound (measured: ~1e34 in the everything-on stability test before this
+    was added). So when `e = t·m·kPermScale·att > 0`, it's scaled by
+    `max(0, 1 - |S[k]|/permCeil)` (`permCeil` = a full-scale bin, `kPermCeilNorm·fftSize/2`)
+    — the boost self-limits toward that ceiling instead of compounding past it. Cuts
+    (`e<0`) are unbounded-down, as before. Don't remove this for a hard per-bin clamp —
+    the self-limit is what keeps the approach smooth near the ceiling.
 - **Momentary** (non-destructive, replaces Filter): `tm = t·(1-m)`;
   `gOut = exp(tm·ln4)` for `tm≥0` (up to +12 dB boost), or `(1+tm)²` for `tm<0` (smooth
   cut to 0 at `tm=-1`). Output is `S[k]·gOut`, `S` itself untouched — turning Amount down
-  restores the held sound intact.
+  restores the held sound intact. Not distance-weighted (it shapes the already
+  East–West-gained output, not the held state).
 - **Input compensation**: `comp[k] = 1/max(kCompFloor, min(1, gOut))`. Only momentary
   *cuts* are compensated (fed tones pass through unaffected, as the old filter did); boosts
   are **not** compensated, so live input isn't attenuated by them.

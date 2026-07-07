@@ -56,16 +56,23 @@ the old Filter; `shape=0, width=0.5, count=1, mode=1` reproduces the old Compres
 ## The spectral shaper
 
 One unified per-bin amplitude curve (`Source/ShapeCurves.h`), replacing the old Filter +
-Compress. Full math in [dsp-design.md](dsp-design.md#the-spectral-shaper). Per shape,
+Compress. **All five shapes are bipolar / zero-mean** (a permanent edit is reversible in
+principle — see dsp-design.md for the boost self-limit that makes compounding a boost
+safe). Full math in [dsp-design.md](dsp-design.md#the-spectral-shaper). Per shape,
 Freq/Width/Count take on a different meaning:
 
 | Shape | Freq | Width | Count | Level |
 |-------|------|-------|-------|-------|
-| **Level** (0) | window centre (inert at count=1) | extremes-vs-mean warp (0.5 = old Compress) | spectral extent of the effect (1 = everywhere) | strength, as old Compress |
-| **Sigmoid** (1) | slope position | ramp width | unused (v1) | >0 = highpass, <0 = lowpass, 0 = flat |
-| **Spikes** (2) | pattern centre | spike spacing | 1 spike → covers whole spectrum | subtractive band-select: >0 = **reject** peaks (notch), <0 = pass **only** peaks (cut the rest), flat at 0 |
-| **Harmonics** (3) | fundamental | spike width | 0 = fundamental only → 12 overtone/undertone pairs/side | subtractive band-select, same sign convention as Spikes: >0 = **reject** the harmonic series, <0 = pass **only** the series (isolate tones related to Freq), flat at 0 |
-| **Sine** (4) | pattern centre (phase) | cycles/octave | 1 lobe → repeats across spectrum | -1..+1, sign flips cut/boost |
+| **Level** (0) | window centre (inert at width=1) | spectral extent of the effect (1 = everywhere) — **post-#14**, was Count's job | extremes-vs-mean warp (0.5 = old Compress) — **post-#14**, was Width's job | strength, as old Compress |
+| **Sigmoid** (1) | tilt centre | tilt width | unused | bipolar tilt: >0 boosts above Freq / cuts below, <0 the reverse, 0 = flat |
+| **Spikes** (2) | comb centre | tooth spacing | 1 tooth → covers whole spectrum | bipolar comb: >0 boosts the teeth / cuts between, <0 the reverse, flat at 0 |
+| **Harmonics** (3) | fundamental | tooth width | 0 = fundamental only → 12 overtone/undertone pairs/side | bipolar comb, same convention as Spikes: >0 boosts the harmonic series / cuts between, <0 the reverse, flat at 0 |
+| **Sine** (4) | pattern centre (phase) | cycles/octave | 1 lobe → repeats across spectrum | -1..+1, sign flips cut/boost (already bipolar, unchanged) |
+
+**Width/Count swap on Level (#14):** before this pass, Width was the extremes-vs-mean warp
+and Count was the spectral extent — swapped because Width-as-extent is more intuitive (it's
+the control that visibly changes *how much* of the spectrum is affected, matching what
+"Width" means on every other shape).
 
 ## The output reverb
 
