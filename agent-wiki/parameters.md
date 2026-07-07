@@ -4,10 +4,15 @@ DAW-facing parameters are defined in `SpectralHoldProcessor::createLayout()`.
 The engine consumes them via `SpectralEngine::Params`. FFT size is separate (GUI-only).
 
 **Creation order = host page order.** Push/Maschine bank 8 consecutive params per page, so
-`createLayout()` order is the grouping. `ewLocation`, `limThreshold` and `limRelease` were
-added after Loss/Phase Noise, so page 1 now holds 11 params — the macro-page re-grouping
-across all pages is a **later pass** (the user deferred it); don't treat the current split
-as final.
+`createLayout()` order is the grouping — 24 params, exactly three pages of 8:
+- **P1 "Hold"**: Feed, Loss, E↔W, Dry/Wet, Output, Limiter Threshold, Limiter Release, Phase Noise.
+- **P2 "Shaper"**: Amount, Shape, Freq, Width, Count, Level, Feed (shapeMode), Harmonize.
+  Harmonize's *master amount* closes this page — accepted so the shaper's own 7 params plus
+  one harmonize knob hit exactly 8; the two harmonize *character* knobs live on page 3.
+- **P3 "Space"**: Harm Width, Harmonics (harmonic), Mix, Decay, Damp, Size, Predelay, Metal.
+
+Parameter **IDs are unchanged** by this grouping (only `createLayout()`'s call order moved)
+— saved sessions restore by ID, so this reorder is state-compatible.
 
 **Editor layout (tabs, not a knob wall):** the display on top; a persistent performance
 row **Feed, Loss, E↔W, Dry/Wet, Output, Thresh, Release**; a tab strip

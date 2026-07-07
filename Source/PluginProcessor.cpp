@@ -64,9 +64,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     AudioProcessorValueTreeState::ParameterLayout layout;
 
     // Creation order = host page order (Push/Maschine bank 8 consecutive params per
-    // page). Page 1 "Hold" (8): feed, loss, dryWet, output, phaseNoise, harmonize,
-    // harmWidth, harmonic. Page 2 "Shaper" (7, revMix spills into its 8th slot -
-    // accepted, see plan-integration.md section 3). Page 3 "Reverb" (rest).
+    // page). Exactly three pages of 8 (see agent-wiki/plan-fixes.md §9):
+    //   P1 "Hold":   feed, loss, ewLocation, dryWet, output, limThreshold, limRelease,
+    //                phaseNoise
+    //   P2 "Shaper": shapeAmt, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel,
+    //                shapeMode, harmonize   (harmonize closing the sculpt page is the
+    //                accepted compromise to hit 8/8/8)
+    //   P3 "Space":  harmWidth, harmonic, revMix, revDecay, revDamp, revSize,
+    //                revPredelay, revMetal
+    // Parameter IDs are unchanged by this grouping -- state restores by ID, not index.
+
+    // --- P1: Hold ---
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "feed", 1 }, "Feed",
         NormalisableRange<float> (0.0f, 1.0f), 0.5f));
@@ -88,9 +96,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "output", 1 }, "Output",
         NormalisableRange<float> (0.0f, 2.0f), 1.0f)); // output level (linear gain)
 
-    layout.add (std::make_unique<AudioParameterBool> (
-        ParameterID { "phaseNoise", 1 }, "Phase Noise", false));
-
     // Output limiter (post-everything safety ceiling; see agent-wiki/dsp-design.md)
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "limThreshold", 1 }, "Limiter Threshold",
@@ -100,27 +105,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "limRelease", 1 }, "Limiter Release",
         NormalisableRange<float> (50.0f, 5000.0f, 0.0f, 0.4f), 1200.0f)); // ms, skewed
 
-    // Harmonize (coupled-oscillator tone interaction; see agent-wiki/harmonize.md)
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "harmonize", 1 }, "Harmonize",
-        NormalisableRange<float> (0.0f, 0.1f), 0.0f));
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "phaseNoise", 1 }, "Phase Noise", false));
 
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "harmWidth", 1 }, "Harm Width",
-        NormalisableRange<float> (0.01f, 3.0f, 0.0f, 0.4f), 0.5f));
-
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "harmonic", 1 }, "Harmonic",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
-
-    // Spectral shaper (replaces the old Filter + Compress; see agent-wiki/dsp-design.md)
+    // --- P2: Shaper (replaces the old Filter + Compress; see agent-wiki/dsp-design.md) ---
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shapeAmt", 1 }, "Shape Amount",
         NormalisableRange<float> (0.0f, 1.0f), 1.0f));
-
-    layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "shapeMode", 1 }, "Shape Mode",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // 0 = momentary, 1 = permanent
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shape", 1 }, "Shape",
@@ -143,6 +134,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "shapeLevel", 1 }, "Shape Level",
         NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
 
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "shapeMode", 1 }, "Shape Mode",
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // 0 = momentary, 1 = permanent
+
+    // Harmonize (coupled-oscillator tone interaction; see agent-wiki/harmonize.md).
+    // Master amount closes page 2 (accepted compromise, see plan-fixes.md §9).
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "harmonize", 1 }, "Harmonize",
+        NormalisableRange<float> (0.0f, 0.1f), 0.0f));
+
+    // --- P3: Space (harmonize character + the output reverb) ---
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "harmWidth", 1 }, "Harm Width",
+        NormalisableRange<float> (0.01f, 3.0f, 0.0f, 0.4f), 0.5f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "harmonic", 1 }, "Harmonic",
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
     // Output reverb (post-fader, pre-limiter; see agent-wiki/plan-reverb.md)
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revMix", 1 }, "Reverb Mix",
@@ -153,12 +163,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         NormalisableRange<float> (0.0f, 1.0f), 0.5f));
 
     layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "revSize", 1 }, "Reverb Size",
-        NormalisableRange<float> (0.5f, 2.0f), 1.0f));
-
-    layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revDamp", 1 }, "Reverb Damp",
         NormalisableRange<float> (0.0f, 1.0f), 0.3f));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "revSize", 1 }, "Reverb Size",
+        NormalisableRange<float> (0.5f, 2.0f), 1.0f));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revPredelay", 1 }, "Reverb Predelay",
