@@ -79,7 +79,7 @@ private:
     void configure (int fftOrder);
     void processFrame (const Params& p);
     void drainBrush (const Params& p);
-    void applyHarmonize (const Params& p);
+    void applyHarmonize (const Params& p, int layer, bool isFirstLayer);
 
     double sampleRate = 44100.0;
     int maxFftSize = 0, maxOrder = 0;
@@ -95,16 +95,32 @@ private:
     std::vector<float> inRing, outRing;
     int inWrite = 0, outRead = 0, hopCount = 0;
 
-    // spectral state
-    std::vector<std::complex<float>> S;   // held phasors
-    std::vector<std::complex<float>> Xs;  // per-hop input spectrum (fed into S)
+    // Location layers (agent-wiki/plan-loclayers.md): kNumLayers parallel held states so
+    // the same frequency can coexist at multiple E<->W locations instead of one recording
+    // dragging/smearing another. S/omega/binLoc are flat arrays of length
+    // kNumLayers*maxBins with stride maxBins; li(l,k) is the flat index. Everything else
+    // (rings, window, expectedAdv, prevPhase, display/harmonize scratch) is shared across
+    // layers -- prevPhase in particular tracks the INPUT's phase for unwrapping, a
+    // property of the analysis, not of any held layer.
+    static constexpr int kNumLayers = 4;
+    int maxBins = 0; // stored at prepare(); the stride for li()
+    size_t li (int layer, int k) const { return (size_t) layer * (size_t) maxBins + (size_t) k; }
+
+    // spectral state (flat, kNumLayers*maxBins -- see li())
+    std::vector<std::complex<float>> S;   // held phasors, per layer
+    std::vector<std::complex<float>> Xs;  // per-hop input spectrum (fed into S); unused
+                                          // beyond bookkeeping, kept single (not layered)
     // Instantaneous-frequency phase tracking (smooth freeze, not bin-centre):
-    std::vector<float> expectedAdv;       // 2*pi*k*hop/N, the bin-centre advance per hop
-    std::vector<float> omega;             // measured per-hop phase advance per bin (rad)
-    std::vector<float> prevPhase;         // last input phase per bin, for unwrapping
-    std::vector<float> binLoc;            // E<->W location of each held tone/bin (0..1);
-                                          // moved together with S/omega whenever energy
-                                          // migrates between bins (harmonize merge/migration)
+    std::vector<float> expectedAdv;       // 2*pi*k*hop/N, bin-centre advance per hop (shared)
+    std::vector<float> omega;             // measured per-hop phase advance, per layer (rad)
+    std::vector<float> prevPhase;         // last INPUT phase per bin, for unwrapping (shared
+                                          // across layers -- see the class-level note above)
+    std::vector<float> binLoc;            // E<->W location per layer/bin (0..1); moved with
+                                          // S/omega within a layer when harmonize migrates
+                                          // energy between bins (never between layers)
+    std::vector<float> mixAbsScratch;     // per-bin listener-mix magnitude (Sum_l |S_l|*att_l),
+                                          // recomputed each frame when the shaper is active;
+                                          // the shaper's pivot/ratio is "shape what you hear"
     juce::Random rng;                     // phase-noise source (audio thread only)
 
     // harmonize peak scratch (preallocated; capped at kMaxPeaks)

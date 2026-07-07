@@ -38,11 +38,12 @@ held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, 
   location knob** (`exp/eastwest`): the held sound becomes a 2-D `[frequency, location]`
   field of 16 slots blended by a presence-weighted location gain. DSP model, engine
   restructure, tests.
-- [plan-loclayers.md](plan-loclayers.md) — plan (NOT yet implemented) for **location
-  layers** (`exp/loclayers`): K=4 parallel held states so the same frequency can coexist
-  at multiple E–W locations — fixes the "re-recording a pitch elsewhere steals/drags it"
+- [plan-loclayers.md](plan-loclayers.md) — plan (implemented) for **location layers**
+  (`exp/loclayers`): K=4 parallel held states so the same frequency can coexist at
+  multiple E–W locations — fixes the "re-recording a pitch elsewhere steals/drags it"
   compromise. Injection routes to the nearest layer or claims a fresh one; playback mixes
-  per bin before a single IFFT.
+  per bin before a single IFFT. Current behavior is in dsp-design.md's "Location layers"
+  section; read this plan for the design rationale and rejected alternatives.
 
 ## Fast facts
 - JUCE lives at `../JUCE` (sibling of repo root), used via `add_subdirectory`. Modern

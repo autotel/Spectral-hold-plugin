@@ -794,19 +794,102 @@ int main()
         fails += ok ? 0 : 1;
     }
 
-    // ew3) re-recording a frequency drags its location: tone deposited at East, then the
-    // same frequency fed at West -> the tone's audibility moves West (grows at 1, shrinks at 0).
+    // ew3) location layers (agent-wiki/plan-loclayers.md): re-recording a frequency
+    // elsewhere no longer drags/steals it -- East holds full quality, West gets its own
+    // fresh layer. Replaces the old "ew re-record drags location" test, which asserted the
+    // steal this fix removes (kept only as the §17 pre-layers baseline in git history).
     {
         SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
         double pa = 0.0;
         ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
         const int bA = ewBin (1000.0f);
         const float atE0 = ewMeasure (e, 0.0f, bA), atW0 = ewMeasure (e, 1.0f, bA);
-        ewDeposit (e, 1.0f, 1000.0f, 0.5f, pa); // re-record the same pitch at West
+        ewDeposit (e, 1.0f, 1000.0f, 0.5f, pa); // record the SAME pitch at West too
         const float atE1 = ewMeasure (e, 0.0f, bA), atW1 = ewMeasure (e, 1.0f, bA);
-        bool ok = atW1 > atW0 * 5.0f && atE1 < atE0 * 0.7f;
-        printf ("[%s] ew re-record drags location: W %.4f->%.3f, E %.3f->%.3f\n",
+        bool ok = atW1 > atW0 * 5.0f          // West grows to full level
+                  && atE1 > atE0 * 0.9f;      // East UNCHANGED -- not dragged, not stolen
+        printf ("[%s] ew location layers: coexist without stealing: W %.4f->%.3f, E %.3f->%.3f\n",
                 ok ? "PASS" : "FAIL", atW0, atW1, atE0, atE1);
+        fails += ok ? 0 : 1;
+    }
+
+    // ew3c) claim boundary: feeding the SAME pitch near the East tone (att >= kClaimAtt)
+    // should still drag it (today's behaviour, one shared position); feeding it far away
+    // should claim a fresh layer instead (ew3's coexistence case). Confirms the threshold
+    // actually separates the two behaviours rather than always claiming or always dragging.
+    {
+        // near: knob at 0.35 -> d=0.35, att = exp(-(0.35/0.35)^2) = exp(-1) ~ 0.37 >= kClaimAtt(0.1)
+        {
+            SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+            double pa = 0.0;
+            ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
+            const int bA = ewBin (1000.0f);
+            const float atE0 = ewMeasure (e, 0.0f, bA);
+            ewDeposit (e, 0.35f, 1000.0f, 0.5f, pa); // near enough: expect a drag
+            const float atE1 = ewMeasure (e, 0.0f, bA);
+            bool ok = atE1 < atE0 * 0.7f; // East tone measurably dragged/shrunk
+            printf ("[%s] ew claim boundary (near, drag expected): E %.3f->%.3f\n",
+                    ok ? "PASS" : "FAIL", atE0, atE1);
+            fails += ok ? 0 : 1;
+        }
+        // far: knob at 1.0 -> d=1.0, att ~ 0.0003 < kClaimAtt(0.1) -> expect a claim (ew3)
+        {
+            SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+            double pa = 0.0;
+            ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
+            const int bA = ewBin (1000.0f);
+            const float atE0 = ewMeasure (e, 0.0f, bA);
+            ewDeposit (e, 1.0f, 1000.0f, 0.5f, pa); // far: expect a claim, East untouched
+            const float atE1 = ewMeasure (e, 0.0f, bA);
+            bool ok = atE1 > atE0 * 0.9f; // East tone NOT dragged
+            printf ("[%s] ew claim boundary (far, claim expected): E %.3f->%.3f\n",
+                    ok ? "PASS" : "FAIL", atE0, atE1);
+            fails += ok ? 0 : 1;
+        }
+    }
+
+    // ew3d) layer exhaustion: depositing the same pitch at 5 distinct locations (> kNumLayers
+    // = 4) must survive -- no NaN, bounded output, the engine steals the quietest layer
+    // rather than crashing or corrupting state.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        double ph = 0.0;
+        bool finite = true;
+        const float locs[] = { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f }; // 5 locations, 4 layers
+        for (float loc : locs)
+        {
+            ewDeposit (e, loc, 1000.0f, 0.5f, ph);
+            std::vector<float> m, p2;
+            if (e.copyDisplay (m, p2) > 0)
+                for (float v : m) if (! std::isfinite (v)) finite = false;
+        }
+        const int bA = ewBin (1000.0f);
+        const float atLast = ewMeasure (e, locs[4], bA);
+        bool ok = finite && std::isfinite (atLast) && atLast > 1.0e-3f;
+        printf ("[%s] ew layer exhaustion: finite=%d atLastLoc=%.3f\n",
+                ok ? "PASS" : "FAIL", (int) finite, atLast);
+        fails += ok ? 0 : 1;
+    }
+
+    // ew3e) no cross-layer frequency steal: a tone held at East must not have its PITCH
+    // retuned by a detuned tone fed far away at West (only its own layer's omega tracks
+    // the input; freq tracking is gated to the injection-receiving layer, plan §2).
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        double pa = 0.0, pb = 0.0;
+        ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa);
+        const int bAbefore = ewBin (1000.0f);
+        const float beforeAtBin = ewMeasure (e, 0.0f, bAbefore);
+
+        ewDeposit (e, 1.0f, 1030.0f, 0.5f, pb); // detuned (+30 Hz), far away at West
+
+        // the East tone's energy should still sit at its ORIGINAL bin (1000 Hz), not have
+        // drifted toward 1030 Hz -- measure both the original bin and confirm it's still
+        // the strong one from East's perspective.
+        const float afterAtBin = ewMeasure (e, 0.0f, bAbefore);
+        bool ok = afterAtBin > beforeAtBin * 0.8f; // still there, not retuned away
+        printf ("[%s] ew no cross-layer pitch steal: East@1kHz bin %.3f->%.3f\n",
+                ok ? "PASS" : "FAIL", beforeAtBin, afterAtBin);
         fails += ok ? 0 : 1;
     }
 

@@ -1,6 +1,7 @@
 #include "SpectralEngine.h"
 #include "ShapeCurves.h"
 #include <numeric> // std::gcd
+#include <algorithm> // std::copy
 
 namespace
 {
@@ -33,6 +34,18 @@ namespace
     constexpr float kInjLocFloor = 1.0e-7f; // ignore near-zero injections when pulling loc
                                             // (silence must not drag tones toward the knob)
 
+    // Location layers (agent-wiki/plan-loclayers.md): the injection-routing decision.
+    // "Near enough" (att >= kClaimAtt) drags the nearest layer's loc toward the knob, same
+    // as the single-layer model. Further than that, dragging would smear a tone recorded
+    // elsewhere; instead CLAIM a fresh/quietest layer at this bin, leaving the far one
+    // untouched. Matches ParticleEngine's kMatchAttFloor so both paradigms agree on where
+    // "elsewhere" starts.
+    constexpr float kClaimAtt = 0.1f;
+    constexpr float kClaimClearFloor = 1.0e-4f; // |S| above which a claimed layer-bin's
+                                                // stale residual is hard-reset before the
+                                                // fresh recording claims it (avoids phase-
+                                                // mushing old content with the new tone)
+
     // playback gain / edit weight at distance d along the E<->W line
     inline float ewAtt (float d)
     {
@@ -63,15 +76,17 @@ void SpectralEngine::prepare (double sr, int maxFftOrder)
     outRing.assign ((size_t) maxFftSize, 0.0f);
     window.assign  ((size_t) maxFftSize, 0.0f);
 
-    const size_t maxBins = (size_t) (maxFftSize / 2 + 1);
-    S.assign   (maxBins, {});
-    Xs.assign  (maxBins, {});
-    expectedAdv.assign (maxBins, 0.0f);
-    omega.assign       (maxBins, 0.0f);
-    prevPhase.assign   (maxBins, 0.0f);
-    binLoc.assign      (maxBins, 0.0f); // all tones start at East (legacy position)
-    dispMag.assign   (maxBins, 0.0f);
-    dispPhase.assign (maxBins, 0.0f);
+    maxBins = maxFftSize / 2 + 1;
+    const size_t layeredSize = (size_t) kNumLayers * (size_t) maxBins;
+    S.assign      (layeredSize, {});
+    omega.assign  (layeredSize, 0.0f);
+    binLoc.assign (layeredSize, 0.0f); // all tones start at East (legacy position)
+    Xs.assign  ((size_t) maxBins, {});
+    expectedAdv.assign  ((size_t) maxBins, 0.0f);
+    prevPhase.assign    ((size_t) maxBins, 0.0f);
+    mixAbsScratch.assign ((size_t) maxBins, 0.0f);
+    dispMag.assign   ((size_t) maxBins, 0.0f);
+    dispPhase.assign ((size_t) maxBins, 0.0f);
 
     configure (maxFftOrder); // default to max; processor overrides via setOrder()
     reset();
@@ -128,7 +143,9 @@ void SpectralEngine::reset()
     std::fill (Xs.begin(), Xs.end(), std::complex<float> {});
     std::fill (prevPhase.begin(), prevPhase.end(), 0.0f);
     std::fill (binLoc.begin(), binLoc.end(), 0.0f); // tones re-home to East (legacy)
-    omega = expectedAdv; // start at bin centre until the input is measured
+    // start every layer at bin centre until the input is measured
+    for (int l = 0; l < kNumLayers; ++l)
+        std::copy (expectedAdv.begin(), expectedAdv.begin() + maxBins, omega.begin() + (long) li (l, 0));
     inWrite = outRead = hopCount = 0;
 }
 
@@ -167,27 +184,38 @@ void SpectralEngine::processFrame (const Params& p)
     }
     fft->performRealOnlyForwardTransform (fftData.data());
 
-    // E<->W (plan v2): the knob is a listener/recorder position on a continuous line.
-    // Each bin/tone carries loc[k]; attenuation att(|L - loc[k]|) is ABSOLUTE (never
-    // normalised across tones), so output gains are smooth in both L and time. Edits are
-    // weighted by the same attenuation ("affect more the nearest, less the furthest").
+    // E<->W (agent-wiki/plan-loclayers.md): the knob is a listener/recorder position on a
+    // continuous line. Each layer/bin carries its own loc[k]; attenuation att(|L-loc[k]|)
+    // is ABSOLUTE (never normalised across tones), so output gains are smooth in both L
+    // and time. kNumLayers parallel held states per bin let the same frequency coexist at
+    // multiple locations instead of one recording dragging/smearing another (§0-§2).
     const float ewL = juce::jlimit (0.0f, 1.0f, p.ewLocation);
 
-    drainBrush (p);     // pending GUI brush edits, distance-weighted
-    applyHarmonize (p); // coupled-oscillator pitch drift, distance-weighted
+    drainBrush (p); // pending GUI brush edits, per layer, distance-weighted
+    for (int l = 0; l < kNumLayers; ++l)
+        applyHarmonize (p, l, l == 0); // coupled-oscillator pitch drift, per layer, independent
 
-    // shaper pivot mean of the active bins (as Compress did)
+    // shaper pivot: "shape what you hear" -- the listener-mix magnitude per bin,
+    // mixAbs[k] = Sum_l |S_l[k]|*att_l[k], computed once and reused for both the mean scan
+    // below and the per-bin ratio in the main loop (agent-wiki/plan-loclayers.md §3).
     const bool shaperActive = p.shapeAmt > 1.0e-4f && std::abs (p.shapeLevel) > 1.0e-4f;
     float shapeMean = 0.0f, activeThresh = 0.0f;
     if (shaperActive)
     {
+        for (int k = 1; k < numBins; ++k)
+        {
+            float m = 0.0f;
+            for (int l = 0; l < kNumLayers; ++l)
+                m += std::abs (S[li (l, k)]) * ewAtt (std::abs (ewL - binLoc[li (l, k)]));
+            mixAbsScratch[(size_t) k] = m;
+        }
         float maxMag = 0.0f;
-        for (int k = 1; k < numBins; ++k) maxMag = juce::jmax (maxMag, std::abs (S[(size_t) k]));
+        for (int k = 1; k < numBins; ++k) maxMag = juce::jmax (maxMag, mixAbsScratch[(size_t) k]);
         activeThresh = maxMag * 1.0e-3f;
         double sum = 0.0; int cnt = 0;
         for (int k = 1; k < numBins; ++k)
         {
-            float a = std::abs (S[(size_t) k]);
+            float a = mixAbsScratch[(size_t) k];
             if (a > activeThresh) { sum += a; ++cnt; }
         }
         shapeMean = (float) (sum / juce::jmax (1, cnt));
@@ -214,23 +242,16 @@ void SpectralEngine::processFrame (const Params& p)
     // --- spectral update
     for (int k = 0; k < numBins; ++k)
     {
-        // E<->W attenuation of this tone at the listener position; also the strength
-        // with which edits, injection and loss reach it ("nearest more, furthest less").
-        const float att = ewAtt (std::abs (ewL - binLoc[(size_t) k]));
-
-        // loss is localised too: a tone at the knob decays at the set rate; a far tone
-        // is spared (decay -> 1). exp(-lossRate*att); att=1 everywhere at knob=0 -> legacy.
-        const float decayK = juce::jmax (kDecayFloor, std::exp (-lossRate * att));
-
-        // shaper L[k] in [-1..+1]. ratio=1 makes the Level-shape component a no-op
-        // (bin 0 and inactive/noise-floor bins, mirroring the old Compress).
+        // shaper L[k] in [-1..+1], computed once per bin from the listener mix. ratio=1
+        // makes the Level-shape component a no-op (bin 0 and inactive/noise-floor bins,
+        // mirroring the old Compress).
         float L = 0.0f;
         if (shaperActive && k > 0)
         {
             float ratio = 1.0f;
             if (shapeMean > 1.0e-9f)
             {
-                float a = std::abs (S[(size_t) k]);
+                float a = mixAbsScratch[(size_t) k];
                 if (a > activeThresh)
                     ratio = juce::jlimit (0.01f, 100.0f, a * invShapeMean);
             }
@@ -241,25 +262,8 @@ void SpectralEngine::processFrame (const Params& p)
         }
         const bool hasL = std::abs (L) > 1.0e-9f;
 
-        // permanent shaper: reshape the held state, distance-weighted (compounds over
-        // frames; a tone at the knob gets the full edit, a far one barely changes).
-        // The bipolar shapes can BOOST (L>0), which would compound without bound; so the
-        // boost self-limits as a bin approaches kPermCeil (equilibrium there), while cuts
-        // (L<0) are unbounded-down as before. Positional shapes thus stay stable in
-        // permanent mode without a per-bin hard clamp.
-        if (hasL && p.shapeMode > 1.0e-4f)
-        {
-            float e = L * p.shapeMode * kPermScale * att;
-            if (e > 0.0f)
-            {
-                const float permCeil = kPermCeilNorm * 0.5f * (float) fftSize; // |S| units
-                e *= juce::jmax (0.0f, 1.0f - std::abs (S[(size_t) k]) / permCeil);
-            }
-            S[(size_t) k] *= std::exp (e);
-        }
-
-        // momentary shaper: non-destructive output gain (full strength: it shapes what
-        // you hear, and the audible output is already location-gained).
+        // momentary shaper / comp: bin-level, applied to the mixed output (unchanged from
+        // the single-layer model -- it shapes what you hear, not any one layer).
         float gOut = 1.0f;
         if (hasL && p.shapeMode < 0.9999f)
         {
@@ -270,44 +274,119 @@ void SpectralEngine::processFrame (const Params& p)
         const float comp = 1.0f / juce::jmax (kCompFloor, juce::jmin (1.0f, gOut));
 
         std::complex<float> x { fftData[(size_t) (2 * k)], fftData[(size_t) (2 * k + 1)] };
+        const std::complex<float> inj = feed * x * comp;
+        const float aInj = std::abs (inj);
 
-        // --- instantaneous-frequency tracking: measure the true per-hop phase advance
-        // of the input and hold the partial at *that* rate, so leakage bins stay phase
-        // coherent and the freeze is a smooth continuous tone (not a bin-centre grain).
-        const float phi  = std::arg (x);
+        // --- instantaneous-frequency tracking: measure the true per-hop phase advance of
+        // the input (shared across layers -- a property of the analysis). Held at *that*
+        // rate so leakage bins stay phase coherent and the freeze is smooth, not grainy.
+        const float phi = std::arg (x);
+        bool haveMeasured = false; float measured = 0.0f;
         if (trackW > 1.0e-4f && std::abs (x) > kTrackThresh)
         {
             float dev = (phi - prevPhase[(size_t) k]) - expectedAdv[(size_t) k];
-            dev -= twoPi * std::round (dev / twoPi);              // wrap to [-pi, pi]
-            const float measured = expectedAdv[(size_t) k] + dev; // input's true advance/hop
-            omega[(size_t) k] += (measured - omega[(size_t) k]) * trackW;
+            dev -= twoPi * std::round (dev / twoPi); // wrap to [-pi, pi]
+            measured = expectedAdv[(size_t) k] + dev; // input's true advance/hop
+            haveMeasured = true;
         }
         prevPhase[(size_t) k] = phi;
         Xs[(size_t) k] = x;
 
-        // free-run phasor at the tracked frequency (+ optional phase noise), inject
-        // compensated input, decay (loss).
-        float w = omega[(size_t) k];
-        if (p.phaseNoise)
-            w += (rng.nextFloat() * 2.0f - 1.0f) * kPhaseNoise;
-        std::complex<float> sk = S[(size_t) k] * std::polar (1.0f, w);
-
-        const std::complex<float> inj = feed * x * comp;
-        const float aInj = std::abs (inj);
-        if (aInj > kInjLocFloor)
+        // --- injection routing (agent-wiki/plan-loclayers.md §2): find the layer nearest
+        // the knob at this bin (tie-break: whichever already holds energy here, then
+        // lowest index -- keeps the knob-at-0 legacy case landing in layer 0 always).
+        int nearestLayer = 0; float nearestAtt = -1.0f;
+        for (int l = 0; l < kNumLayers; ++l)
         {
-            // new energy arrives at the knob: pull the tone's location toward the
-            // listener, weighted by new vs held energy (continuous, no quantisation)
-            const float aHeld = std::abs (sk);
-            binLoc[(size_t) k] = (aHeld * binLoc[(size_t) k] + aInj * ewL)
-                                 / (aHeld + aInj);
-            sk += inj;
+            const float al = ewAtt (std::abs (ewL - binLoc[li (l, k)]));
+            if (al > nearestAtt + 1.0e-6f
+                || (al > nearestAtt - 1.0e-6f
+                    && std::abs (S[li (l, k)]) > std::abs (S[li (nearestLayer, k)])))
+            {
+                nearestAtt = al;
+                nearestLayer = l;
+            }
         }
-        sk *= decayK;
-        S[(size_t) k] = sk;
+        int injectLayer = nearestLayer;
+        bool claimed = false;
+        if (nearestAtt < kClaimAtt)
+        {
+            // near enough at NO layer: claim the quietest layer instead of dragging a far
+            // one (which would smear a tone recorded elsewhere) -- leaves every other
+            // layer's held content untouched.
+            int quietest = 0; float qAbs = std::abs (S[li (0, k)]);
+            for (int l = 1; l < kNumLayers; ++l)
+            {
+                const float a = std::abs (S[li (l, k)]);
+                if (a < qAbs) { qAbs = a; quietest = l; }
+            }
+            injectLayer = quietest;
+            claimed = true;
+        }
 
-        // output: the held tone heard from the listener position, momentary-shaped
-        const std::complex<float> outBin = sk * att * gOut;
+        // --- per-layer update: permanent shaper, rotate, (routed) inject, localised decay
+        std::complex<float> mixOut {};
+        for (int l = 0; l < kNumLayers; ++l)
+        {
+            const size_t idx = li (l, k);
+            const float locL = binLoc[idx];
+            const float attL = ewAtt (std::abs (ewL - locL));
+
+            // permanent shaper: reshape this layer's held state, scaled by its OWN
+            // distance (a tone at the knob gets the full edit, a far one barely changes).
+            // The bipolar shapes can BOOST, which would compound without bound; the boost
+            // self-limits as a bin approaches kPermCeil (equilibrium there), cuts are
+            // unbounded-down as before.
+            if (hasL && p.shapeMode > 1.0e-4f)
+            {
+                float e = L * p.shapeMode * kPermScale * attL;
+                if (e > 0.0f)
+                {
+                    const float permCeil = kPermCeilNorm * 0.5f * (float) fftSize; // |S| units
+                    e *= juce::jmax (0.0f, 1.0f - std::abs (S[idx]) / permCeil);
+                }
+                S[idx] *= std::exp (e);
+            }
+
+            // free-run phasor at the tracked frequency (+ optional phase noise)
+            float w = omega[idx];
+            if (p.phaseNoise)
+                w += (rng.nextFloat() * 2.0f - 1.0f) * kPhaseNoise;
+            std::complex<float> sk = S[idx] * std::polar (1.0f, w);
+
+            if (l == injectLayer)
+            {
+                // frequency tracking follows Feed, targets only the receiving layer --
+                // otherwise recording elsewhere would silently retune a far tone's pitch.
+                if (haveMeasured)
+                    omega[idx] += (measured - omega[idx]) * trackW;
+
+                if (aInj > kInjLocFloor)
+                {
+                    // a claimed layer's stale residual (if any) is cleared first so the
+                    // fresh recording doesn't phase-mush with old content; a dragged
+                    // layer keeps integrating as before.
+                    if (claimed && std::abs (sk) > kClaimClearFloor)
+                        sk = {};
+                    const float aHeld = std::abs (sk);
+                    binLoc[idx] = claimed ? ewL
+                                           : (aHeld * locL + aInj * ewL) / (aHeld + aInj);
+                    sk += inj;
+                }
+            }
+
+            // loss is localised: a layer at the knob decays at the set rate; a far one is
+            // spared (decay -> 1). att==1 everywhere at knob==0 -> legacy single-buffer rate.
+            const float decayL = juce::jmax (kDecayFloor, std::exp (-lossRate * attL));
+            sk *= decayL;
+            S[idx] = sk;
+
+            // output: this layer's held tone heard from the listener position
+            mixOut += sk * attL;
+        }
+
+        // momentary-shaped mix of all layers -- the audible output
+        const std::complex<float> outBin = mixOut * gOut;
         fftData[(size_t) (2 * k)]     = outBin.real();
         fftData[(size_t) (2 * k + 1)] = outBin.imag();
         dispScratch[(size_t) k] = outBin;
@@ -366,23 +445,37 @@ void SpectralEngine::drainBrush (const Params& p)
             if (w < 1.0e-3f)
                 continue;
             // gain = factor^(strength * w * rate), distance-weighted along E<->W so the
-            // brush edits the tones near the listener and barely reaches far ones
-            const float att = ewAtt (std::abs (ewL - binLoc[(size_t) k]));
-            const float g = std::exp (op.strength * w * kBrushRate * lnFactor * att);
-            S[(size_t) k] *= g;
+            // brush edits the tones near the listener and barely reaches far ones -- per
+            // layer, each scaled by its own distance (agent-wiki/plan-loclayers.md §3).
+            for (int l = 0; l < kNumLayers; ++l)
+            {
+                const size_t idx = li (l, k);
+                const float att = ewAtt (std::abs (ewL - binLoc[idx]));
+                const float g = std::exp (op.strength * w * kBrushRate * lnFactor * att);
+                S[idx] *= g;
+            }
         }
     }
     brushScratch.clear();
 }
 
-void SpectralEngine::applyHarmonize (const Params& p)
+void SpectralEngine::applyHarmonize (const Params& p, int layer, bool isFirstLayer)
 {
+    // Harmonize runs independently per layer (agent-wiki/plan-loclayers.md §4): peaks,
+    // drift, unison merge and migration all stay within one layer's S/omega/binLoc slice.
+    // Cross-layer entrainment (tones held in different layers coupling to each other) is
+    // a known limitation, not attempted here. The influence overlay snapshot is the UNION
+    // across layers (isFirstLayer resets the running count; later layers append).
+
     // Harmonize is the master amount; Harmonic only blends the *character* (0 = averaging /
     // entrainment, 1 = harmonic attraction). So Harmonic does nothing while Harmonize is 0.
     if (p.harmonize <= 1.0e-4f)
     {
-        const juce::ScopedTryLock stl (displayLock);
-        if (stl.isLocked()) dispPeakN = 0; // clear the influence overlay
+        if (isFirstLayer)
+        {
+            const juce::ScopedTryLock stl (displayLock);
+            if (stl.isLocked()) dispPeakN = 0; // clear the influence overlay
+        }
         return;
     }
 
@@ -401,16 +494,16 @@ void SpectralEngine::applyHarmonize (const Params& p)
     // omega (rad/hop) <-> frequency (Hz): f = omega * fScale
     const float fScale = (float) sampleRate / ((float) hopSize * juce::MathConstants<float>::twoPi);
 
-    // 1. extract significant spectral peaks (local maxima)
+    // 1. extract significant spectral peaks (local maxima) within THIS layer
     float maxMag = 0.0f;
-    for (int k = 1; k < numBins; ++k) maxMag = juce::jmax (maxMag, std::abs (S[(size_t) k]));
+    for (int k = 1; k < numBins; ++k) maxMag = juce::jmax (maxMag, std::abs (S[li (layer, k)]));
     if (maxMag < 1.0e-9f) return;
     const float floor = maxMag * kPeakFloor;
 
     int P = 0;
     for (int k = 4; k < numBins - 4 && P < kMaxPeaks; ++k)
     {
-        const float a = std::abs (S[(size_t) k]);
+        const float a = std::abs (S[li (layer, k)]);
         if (a <= floor) continue;
         // prominence: local max over +/-1 bin only (the floor rejects Hann sidelobes). A wider
         // window would suppress the quieter of two close tones, counting them as one peak so
@@ -418,12 +511,12 @@ void SpectralEngine::applyHarmonize (const Params& p)
         // while a single tone's mainlobe is still a single peak.
         bool isPeak = true;
         for (int o = -1; o <= 1 && isPeak; ++o)
-            if (o != 0 && std::abs (S[(size_t) (k + o)]) > a) isPeak = false;
+            if (o != 0 && std::abs (S[li (layer, k + o)]) > a) isPeak = false;
         if (isPeak)
         {
             peakBin[(size_t) P]   = k;
             peakAmp[(size_t) P]   = a;
-            peakFreq[(size_t) P]  = omega[(size_t) k] * fScale;
+            peakFreq[(size_t) P]  = omega[li (layer, k)] * fScale;
             peakDelta[(size_t) P] = 0.0f;
             ++P;
         }
@@ -444,10 +537,10 @@ void SpectralEngine::applyHarmonize (const Params& p)
             if (std::abs (peakFreq[(size_t) i] - peakFreq[(size_t) j]) >= lockTolHz) { ++j; continue; }
 
             const int bi = peakBin[(size_t) i], bj = peakBin[(size_t) j];
-            const float wi = std::abs (S[(size_t) bi]), wj = std::abs (S[(size_t) bj]);
-            const float mo = (wi * omega[(size_t) bi] + wj * omega[(size_t) bj]) / (wi + wj + 1.0e-12f);
-            const float mloc = (wi * binLoc[(size_t) bi] + wj * binLoc[(size_t) bj]) / (wi + wj + 1.0e-12f);
-            const std::complex<float> combined = S[(size_t) bi] + S[(size_t) bj];
+            const float wi = std::abs (S[li (layer, bi)]), wj = std::abs (S[li (layer, bj)]);
+            const float mo = (wi * omega[li (layer, bi)] + wj * omega[li (layer, bj)]) / (wi + wj + 1.0e-12f);
+            const float mloc = (wi * binLoc[li (layer, bi)] + wj * binLoc[li (layer, bj)]) / (wi + wj + 1.0e-12f);
+            const std::complex<float> combined = S[li (layer, bi)] + S[li (layer, bj)];
             const int target = juce::jlimit (1, numBins - 2, (int) std::lround (mo * fScale / binHz));
 
             for (int base : { bi, bj })
@@ -456,13 +549,13 @@ void SpectralEngine::applyHarmonize (const Params& p)
                     const int idx = base + o;
                     if (idx >= 1 && idx < numBins)
                     {
-                        S[(size_t) idx]     = std::complex<float> {};
-                        omega[(size_t) idx] = expectedAdv[(size_t) idx];
+                        S[li (layer, idx)]     = std::complex<float> {};
+                        omega[li (layer, idx)] = expectedAdv[(size_t) idx];
                     }
                 }
-            S[(size_t) target]      = combined;
-            omega[(size_t) target]  = mo;
-            binLoc[(size_t) target] = mloc; // location merges like omega (amplitude-weighted)
+            S[li (layer, target)]      = combined;
+            omega[li (layer, target)]  = mo;
+            binLoc[li (layer, target)] = mloc; // location merges like omega (amplitude-weighted)
 
             peakBin[(size_t) i]  = target;
             peakAmp[(size_t) i]  = std::abs (combined);
@@ -521,22 +614,25 @@ void SpectralEngine::applyHarmonize (const Params& p)
         const float blended   = (1.0f - p.harmonic) * entDrift + p.harmonic * harmDrift;
         // distance-weighted: harmonize pulls hardest on tones near the listener position
         const float att       = ewAtt (std::abs (juce::jlimit (0.0f, 1.0f, p.ewLocation)
-                                                 - binLoc[(size_t) peakBin[(size_t) i]]));
+                                                 - binLoc[li (layer, peakBin[(size_t) i])]));
         const float df        = p.harmonize * kHarmRate * blended * att;
 
         peakDelta[(size_t) i] = juce::jlimit (-kHarmStep, kHarmStep, df / fScale); // -> rad/hop
     }
 
-    // snapshot peaks for the influence overlay (freq, weight, drift in Hz)
+    // snapshot peaks for the influence overlay (freq, weight, drift in Hz): UNION across
+    // layers -- isFirstLayer resets the running count, every layer's call appends.
     if (const juce::ScopedTryLock stl (displayLock); stl.isLocked())
     {
-        dispPeakN = juce::jmin (P, kMaxPeaks);
-        for (int i = 0; i < dispPeakN; ++i)
+        if (isFirstLayer) dispPeakN = 0;
+        const int n = juce::jmin (P, kMaxPeaks - dispPeakN);
+        for (int i = 0; i < n; ++i)
         {
-            dispPeakF[(size_t) i] = peakFreq[(size_t) i];
-            dispPeakA[(size_t) i] = peakAmp[(size_t) i];
-            dispPeakD[(size_t) i] = peakDelta[(size_t) i] * fScale; // rad/hop -> Hz drift
+            dispPeakF[(size_t) (dispPeakN + i)] = peakFreq[(size_t) i];
+            dispPeakA[(size_t) (dispPeakN + i)] = peakAmp[(size_t) i];
+            dispPeakD[(size_t) (dispPeakN + i)] = peakDelta[(size_t) i] * fScale; // rad/hop -> Hz drift
         }
+        dispPeakN += n;
     }
 
     // 3. apply the shift to each peak's bin and its immediate leakage neighbours
@@ -551,7 +647,7 @@ void SpectralEngine::applyHarmonize (const Params& p)
             if (kk < 1 || kk >= numBins) continue;
             const float lo = expectedAdv[(size_t) kk] - juce::MathConstants<float>::pi;
             const float hi = expectedAdv[(size_t) kk] + juce::MathConstants<float>::pi;
-            omega[(size_t) kk] = juce::jlimit (lo, hi, omega[(size_t) kk] + d);
+            omega[li (layer, kk)] = juce::jlimit (lo, hi, omega[li (layer, kk)] + d);
         }
     }
 
@@ -561,12 +657,15 @@ void SpectralEngine::applyHarmonize (const Params& p)
     // value, omega (frequency-absolute) and phase. Shifting the packet as a unit keeps the
     // peak coherent (moving bins independently tears it apart); omega is preserved so the
     // pitch is continuous, and the tone can travel any distance one bin at a time.
+    // (prevPhase is NOT moved: it's shared analysis-only state -- see the class-level note
+    // in SpectralEngine.h -- and gets unconditionally overwritten from the input every
+    // frame's main loop regardless, so migrating it was already a no-op before this branch.)
     const float binW = juce::MathConstants<float>::twoPi * (float) hopSize / (float) fftSize;
     const float half = binW * 0.5f;
     for (int i = 0; i < P; ++i)
     {
         const int k = peakBin[(size_t) i];
-        const float rel = omega[(size_t) k] - expectedAdv[(size_t) k];
+        const float rel = omega[li (layer, k)] - expectedAdv[(size_t) k];
         const int s = (rel > half) ? +1 : (rel < -half) ? -1 : 0;
         if (s == 0) continue;
         if (k - kPad < 1 || k + kPad >= numBins - 1) continue; // near edges: don't migrate
@@ -586,24 +685,22 @@ void SpectralEngine::applyHarmonize (const Params& p)
         if (s > 0)
             for (int b = k + kPad; b >= k - kPad; --b)
             {
-                S[(size_t) (b + 1)]        = S[(size_t) b];
-                omega[(size_t) (b + 1)]    = omega[(size_t) b];
-                prevPhase[(size_t) (b + 1)] = prevPhase[(size_t) b];
-                binLoc[(size_t) (b + 1)]   = binLoc[(size_t) b];
+                S[li (layer, b + 1)]     = S[li (layer, b)];
+                omega[li (layer, b + 1)] = omega[li (layer, b)];
+                binLoc[li (layer, b + 1)] = binLoc[li (layer, b)];
             }
         else
             for (int b = k - kPad; b <= k + kPad; ++b)
             {
-                S[(size_t) (b - 1)]        = S[(size_t) b];
-                omega[(size_t) (b - 1)]    = omega[(size_t) b];
-                prevPhase[(size_t) (b - 1)] = prevPhase[(size_t) b];
-                binLoc[(size_t) (b - 1)]   = binLoc[(size_t) b];
+                S[li (layer, b - 1)]     = S[li (layer, b)];
+                omega[li (layer, b - 1)] = omega[li (layer, b)];
+                binLoc[li (layer, b - 1)] = binLoc[li (layer, b)];
             }
 
         // clear the bin vacated at the trailing edge and neutralise its omega
         const int vac = (s > 0) ? (k - kPad) : (k + kPad);
-        S[(size_t) vac] = std::complex<float> {};
-        omega[(size_t) vac] = expectedAdv[(size_t) vac];
+        S[li (layer, vac)] = std::complex<float> {};
+        omega[li (layer, vac)] = expectedAdv[(size_t) vac];
     }
 }
 

@@ -177,10 +177,10 @@ attack stays fixed at `kLimAttMs = 5 ms` (not exposed — always fast enough to 
   processor, not the engine, so the test replicates the 5-line envelope math rather than
   linking `PluginProcessor` into the test target).
 
-## East–West location field (continuous tone locations, plan v2)
-Every bin/tone carries a **continuous location** `binLoc[k] ∈ [0,1]` alongside `S`/`omega`/
-`prevPhase`. The `ewLocation` knob (0 = East = legacy default, 1 = West) is a **listener/
-recorder walking the line**:
+## East–West location field (continuous tone locations, plan v2 + location layers)
+Every bin/tone carries a **continuous location** `binLoc[k] ∈ [0,1]` alongside `S`/`omega`.
+The `ewLocation` knob (0 = East = legacy default, 1 = West) is a **listener/recorder
+walking the line**:
 
 - **Playback**: each bin is output through `att(d) = exp(−(d/kLocSigma)²)`,
   `d = |ewLocation − binLoc[k]|`. The attenuation is **absolute — never normalised across
@@ -201,9 +201,55 @@ recorder walking the line**:
   so parked at East every `att = 1` and the engine is exactly the pre-E–W single buffer —
   all params affect the sound as before.
 
-One structural compromise: locations are per **bin**, so two same-frequency tones cannot
-coexist at two locations — re-recording a pitch elsewhere *drags* it (weighted merge).
-Documented in gotchas. Cost: one `exp` per bin per hop.
+### Location layers (`kNumLayers = 4`, agent-wiki/plan-loclayers.md)
+The single structural compromise above — one location per bin, so two same-frequency
+tones can't coexist, re-recording a pitch elsewhere used to *drag/smear* it — is fixed by
+giving each bin **`kNumLayers` parallel held states** (`S`/`omega`/`binLoc`, flat arrays of
+length `kNumLayers*maxBins`, stride `maxBins`, indexed via the private `li(layer, bin)`
+helper). `expectedAdv` and `prevPhase` stay **shared** across layers: `prevPhase` tracks
+the *input's* phase for unwrapping, a property of the analysis, not of any held layer.
+
+- **Injection routing** (`processFrame`, per bin, before the per-layer update): find the
+  layer nearest the knob (tie-break: whichever already holds energy here, then lowest
+  index — keeps `ewLocation=0` landing in layer 0 forever, reproducing single-buffer
+  behaviour exactly). If that nearest layer's `att ≥ kClaimAtt` (0.1, matching
+  `ParticleEngine`'s `kMatchAttFloor` so both paradigms agree on where "elsewhere"
+  starts), **drag** it toward the knob as before (same place, being re-recorded). If every
+  layer is far (`att < kClaimAtt`), **claim** the quietest layer instead: hard-reset its
+  stale residual if any (`kClaimClearFloor`), snap `binLoc = ewLocation`, inject fresh.
+  Every other layer at that bin is untouched.
+- **Frequency tracking is gated to the injection-receiving layer only** — otherwise
+  recording a detuned tone far away would silently retune a held tone's pitch through the
+  shared `omega` update. (`omega` itself is per layer, so this is enforced by only writing
+  the chosen layer's slot.)
+- **Playback mixes before synthesis, still one IFFT**: `outBin[k] = gOut · Σ_l S_l[k]·att_l[k]`.
+  CPU cost grows only in the per-bin update loop (≈4× the rotate/decay/shaper work);
+  windowing/OLA/IFFT cost is unchanged.
+- **Shaper pivot is the listener mix**: `mixAbs[k] = Σ_l |S_l[k]|·att_l[k]` — "shape what
+  you hear" — used for both the Level-shape mean scan and the per-bin ratio. Permanent
+  shaper and brush apply **per layer**, each scaled by that layer's own `att_l`.
+  Momentary shaper (`gOut`) stays bin-level, applied once to the mixed output.
+  Loss/decay is per layer too (`exp(−lossRate·att_l)`), so a far layer is spared exactly
+  like before, just independently per layer now.
+- **Harmonize runs per layer, independently** (`applyHarmonize(p, layer, isFirstLayer)`):
+  peak detect, unison merge, drift and migration all stay within one layer's slice. Tones
+  held in *different* layers do not entrain against each other — a known limitation, not a
+  bug; cross-layer coupling is unimplemented future work if it's missed by ear.
+  `copyPeaks`'s influence overlay is the **union** across layers (`isFirstLayer` resets the
+  running `dispPeakN`, every layer's call appends).
+- **Layer exhaustion**: if all `kNumLayers` are occupied by far content at a bin, a claim
+  steals the quietest one. The stolen tone was far from the listener already (small
+  `att`), so it's nearly inaudible at the knob position where the steal happens; it simply
+  vanishes at its own home position. Finite-resource compromise, same spirit as
+  `ParticleEngine`'s pool eviction.
+- **Backward compatible**: at `ewLocation=0` with a fresh `reset()`, every layer starts at
+  `binLoc=0`, so the tie-break always lands injection in layer 0 and layers 1–3 stay
+  empty (contribute 0 to the mix) — bit-for-bit the pre-layers single-buffer engine. Every
+  pre-existing (non-layer-specific) test runs at this default and is the regression net.
+
+Cost: `kNumLayers` × one `exp` per bin per hop for `att`, computed twice per bin (once in
+the shaper's `mixAbs` pre-pass when active, once in the routing/update loop) — cheap
+relative to the FFT/OLA budget, but a candidate to cache if a future profile shows it hot.
 
 ## Reconfiguring FFT size at runtime
 `setOrder()` is called from the message thread; it only stores `pendingOrder`. The audio
@@ -217,4 +263,7 @@ change (a clean re-freeze), and latency is re-reported.
 `4.6` normaliser in `ShapeCurves.h` — see the shaper section above), `kLn4=ln(4)` (momentary
 boost ceiling, +12 dB). East–West: `kLocSigma=0.35` (room size — gaussian attenuation width;
 d=0.5 → ~−18 dB, d=1 → ~−71 dB), `kInjLocFloor` (ignore near-zero injections when pulling
-`binLoc`). Limiter constants are at the top of `PluginProcessor.cpp`.
+`binLoc`). Location layers: `kNumLayers=4` (private, `SpectralEngine.h`), `kClaimAtt=0.1`
+(drag-vs-claim threshold), `kClaimClearFloor=1e-4` (residual above which a claimed layer's
+stale content is hard-reset before the fresh recording). Limiter constants are at the top
+of `PluginProcessor.cpp`.

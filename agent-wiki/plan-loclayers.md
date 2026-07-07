@@ -1,8 +1,21 @@
 # PLAN — Location layers for the bin engine (`exp/loclayers`)
 
-**Status: NOT implemented. Working plan (written for Sonnet). Experiment — "see where it
-goes".** Branch is off `main` (bin engine only; the particle engine lives on
-`exp/particles` and is not involved here).
+**Status: Implemented** (all 5 phases from §7: mechanical layering, injection routing,
+per-layer edits, per-layer harmonize, this wiki pass). Branch is off `main` (bin engine
+only; the particle engine lives on `exp/particles` and is not involved here). All
+pre-existing tests pass unchanged (backward compat at `ewLocation=0` confirmed); the old
+"ew re-record drags location" test was replaced with a coexistence assertion (it tested
+the exact steal this fix removes), plus 3 new tests (claim boundary, layer exhaustion,
+no-cross-layer-pitch-steal). See dsp-design.md's "Location layers" section and
+gotchas.md's "Location layers" section for the settled behaviour and traps.
+
+**One implementation note vs the plan text below**: §1's storage layout said
+`prevPhase` was already shared (not per-layer) — confirmed correct — but harmonize's
+migration step (§4/original code) used to copy `prevPhase` along with a migrating packet.
+That line is **removed**, not generalised per-layer: it was already inert in the
+single-layer engine too (the main per-bin loop unconditionally overwrites `prevPhase`
+from the input every frame, before migration's copy could ever be read), verified before
+deleting. Documented in gotchas.md so it isn't "fixed" back in by mistake.
 
 ## 0. The problem (why this branch exists)
 

@@ -148,9 +148,6 @@ Read this before "fixing" something that looks wrong — it probably isn't.
 - **Room semantics replaced the v1 tent rules**: a lone tone at East *does* fade as you
   walk West now (distance attenuation) — that's the design, not a regression. Louder tones
   carry further because attenuation multiplies amplitude.
-- **Per-bin locations can't hold two same-frequency tones at two places.** Re-recording a
-  pitch at a new location drags the existing tone's `binLoc` (energy-weighted). Accepted
-  compromise of the bin-based model.
 - **Edits are distance-weighted** (permanent shaper, brush, harmonize drift ×
   `att(|knob − binLoc|)`); the momentary shaper is not (it shapes the already
   location-gained output). Knob at 0 with everything at 0 → all weights 1 → legacy.
@@ -158,6 +155,33 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   without overwriting, set Feed = 0. By design.
 - **`Save sound` was removed** on this branch — the held state is no longer serialised. If
   you see references to `writeAudioState`/`audioState`, they're gone.
+
+## Location layers (exp/loclayers — fixes the per-bin steal above)
+- **The "per-bin locations can't hold two same-frequency tones" limit above is fixed.**
+  `S`/`omega`/`binLoc` are now `kNumLayers=4` parallel copies per bin (flat arrays, stride
+  `maxBins`, index via the private `li(layer, bin)`). Re-recording a pitch far from where
+  it's already held **claims a fresh layer** instead of dragging/smearing the old one; only
+  re-recording *near* the existing location (`att ≥ kClaimAtt`) still drags it, same as
+  before. See dsp-design.md's "Location layers" section for the full routing rule.
+- **`prevPhase` is shared across layers, NOT layered.** It tracks the *input's* phase for
+  unwrapping — a property of the analysis, not of any held layer — and gets unconditionally
+  overwritten from the input every frame regardless of which layer holds what. Migration
+  (harmonize step 4) used to copy `prevPhase` along with a migrating packet; that line was
+  **removed**, not preserved-per-layer — it was already a no-op (immediately overwritten by
+  the same frame's main loop before it could ever be read), confirmed before removing it.
+  Don't try to "fix" this by re-adding a per-layer `prevPhase` — there's nothing to fix.
+- **Harmonize doesn't couple across layers.** A tone held in layer 0 and one in layer 2
+  won't entrain against each other even if both are near the listener — each layer runs
+  `applyHarmonize` independently. Known limitation, not a bug; revisit if it's audibly
+  missed (cross-layer coupling is unimplemented future work).
+- **Layer exhaustion steals the quietest layer-bin**, not the nearest or oldest. If you're
+  chasing a "why did my 5th distant recording erase something" report, this is why —
+  finite resource, same spirit as `ParticleEngine`'s pool eviction.
+- **The old `SpectralHoldTest` case "ew re-record drags location" was replaced**, not kept
+  — it asserted the drag/steal that this fix removes (East used to shrink when West was
+  recorded; now it doesn't). If you're diffing test output against an old run and a test
+  name is missing, that's why; the new case is "ew location layers: coexist without
+  stealing".
 
 ## Integration decisions (exp/integration)
 - **Harmonize has no momentary/permanent mode knob on purpose.** It must rewrite `omega`
