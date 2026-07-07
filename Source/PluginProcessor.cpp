@@ -38,6 +38,7 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pRevSize     = apvts.getRawParameterValue ("revSize");
     pRevDamp     = apvts.getRawParameterValue ("revDamp");
     pRevPredelay = apvts.getRawParameterValue ("revPredelay");
+    pRevMetal    = apvts.getRawParameterValue ("revMetal");
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::createLayout()
@@ -144,6 +145,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revPredelay", 1 }, "Reverb Predelay",
         NormalisableRange<float> (0.0f, 250.0f, 0.0f, 0.35f), 20.0f)); // ms, log-ish skew
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "revMetal", 1 }, "Reverb Metal",
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // less diffusion, no LFO smear
 
     return layout;
 }
@@ -278,7 +283,7 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         }
 
         reverb.setParams (pRevDecay->load(), pRevSize->load(), pRevDamp->load(),
-                           pRevPredelay->load() * 0.001f);
+                           pRevPredelay->load() * 0.001f, pRevMetal->load());
         reverb.process (revMono.data(), revWetL.data(), revWetR.data(), numSamples);
 
         const float dryGain = std::cos (revMix * juce::MathConstants<float>::halfPi);

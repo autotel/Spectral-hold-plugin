@@ -37,9 +37,10 @@ description of whatever control the mouse is over (Ableton-style).
 | Level `shapeLevel`  | -1 .. +1       | 0.0     | Signed strength. **0 = no effect for every shape** (global bypass). |
 | Mix `revMix`         | 0 .. 1         | 0.0     | Output reverb wet/dry, equal-power. 0 = bit-exact dry (hard bypass, see gotchas.md). |
 | Decay `revDecay`     | 0 .. 1         | 0.5     | Tank feedback / tail length. |
-| Size `revSize`       | 0.5 .. 2.0     | 1.0     | Scales the tank delay lengths (room size). Moving it live gently pitch-bends the tail (by design). |
 | Damp `revDamp`       | 0 .. 1         | 0.3     | One-pole damping inside the tank: 0 = bright, 1 = dark. |
+| Size `revSize`       | 0.5 .. 2.0     | 1.0     | Scales the tank delay lengths (room size). Moving it live gently pitch-bends the tail (by design). |
 | Predelay `revPredelay` | 0 .. 250 ms  | 20      | Delay before the reverb's input diffusers. |
+| Metal `revMetal`    | 0 .. 1         | 0.0     | Trades diffusion for a harder, more discrete reflection character: input diffusion gains shrink, the decay-diffusion allpass weakens, and the LFO excursion that smears the tank's resonances is scaled down to zero. See gotchas.md — the perceptual direction wasn't confirmed by a synthetic proxy, only by ear. |
 | FT Size (GUI only)  | 1024 .. 8192   | 4096    | FFT size. `ComboBox`, powers of two. Not a DAW parameter. |
 | Live / 0 PDC (GUI only) | bool       | off     | Reports **0 latency** to the host (no plugin delay compensation) for live use. The real STFT latency is unchanged; the host just stops delay-compensating. |
 

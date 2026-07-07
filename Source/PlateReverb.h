@@ -17,8 +17,12 @@ public:
     void reset();
 
     // decay/size/damp/predelaySec in their raw APVTS ranges (see plan-reverb.md §3).
-    // Cheap - call once per block; size and predelay are smoothed per-sample inside.
-    void setParams (float decay, float size, float damp, float predelaySec);
+    // metal (0..1, default 0) trades diffusion for discrete, comb-like reflections:
+    // less input diffusion, a weaker decay-diffusion allpass, and less LFO excursion
+    // (the modulation smear is what keeps the tail from ringing metallically -- turning
+    // it down IS the effect). Cheap - call once per block; size and predelay are
+    // smoothed per-sample inside.
+    void setParams (float decay, float size, float damp, float predelaySec, float metal);
 
     void process (const float* inMono, float* outL, float* outR, int numSamples);
 
@@ -74,6 +78,14 @@ private:
     float predelaySamplesTarget = 0.0f, predelaySmoothed = 0.0f;
     float sizeCoef = 0.0f; // ~50 ms one-pole, computed in prepare()
 
+    // Metal (0..1): scales diffusion/excursion toward a discrete, comb-like character.
+    // These replace the fixed input-diffusion gains, decay-diffusion-1 magnitude and LFO
+    // excursion namespace constants -- computed once per setParams() call from `metal`.
+    float inGain1 = 0.750f, inGain2 = 0.750f, inGain3 = 0.625f, inGain4 = 0.625f;
+    float decayDiffusion1 = 0.70f;  // magnitude; sign flipped to -decayDiffusion1 on use
+    float excursionBase = 16.0f;    // kExcursion * srScale, set in prepare()
+    float excursionSamples = 16.0f; // excursionBase * (1 - metal), set in setParams()
+
     // input chain (mono)
     DelayLine predelay;
     float bandwidthLp = 0.0f;
@@ -88,7 +100,6 @@ private:
     // detuned LFOs modulating the two "modulated allpass" read positions
     float lfoPhaseA = 0.0f, lfoPhaseB = 0.0f;
     float lfoIncA = 0.0f, lfoIncB = 0.0f;
-    float excursionSamples = 16.0f;
 
     JUCE_LEAK_DETECTOR (PlateReverb)
 };

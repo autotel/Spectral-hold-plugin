@@ -100,6 +100,7 @@ private:
     std::atomic<float>* pRevSize     = nullptr;
     std::atomic<float>* pRevDamp     = nullptr;
     std::atomic<float>* pRevPredelay = nullptr;
+    std::atomic<float>* pRevMetal    = nullptr;
     PlateReverb reverb;
     std::vector<float> revMono, revWetL, revWetR;
     float prevRevMix = 0.0f; // to detect the 1->0 transition and reset the tail

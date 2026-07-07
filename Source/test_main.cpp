@@ -6,6 +6,7 @@
 #include "DryDelay.h"
 #include <cstdio>
 #include <cmath>
+#include <algorithm>
 
 #ifndef M_PI
 constexpr double M_PI = 3.14159265358979323846; // MSVC doesn't define it
@@ -496,7 +497,7 @@ int main()
     // RMS around 4.0-4.5s smaller (decay=0.5, size=1)
     {
         PlateReverb rv; rv.prepare (sr);
-        rv.setParams (0.5f, 1.0f, 0.3f, 0.02f);
+        rv.setParams (0.5f, 1.0f, 0.3f, 0.02f, 0.0f);
         const int n = (int) (5.0 * sr);
         std::vector<float> in (n, 0.0f), wl (n), wr (n);
         in[0] = 1.0f;
@@ -514,7 +515,7 @@ int main()
         auto rmsAt2s = [&] (float decay)
         {
             PlateReverb rv; rv.prepare (sr);
-            rv.setParams (decay, 1.0f, 0.3f, 0.02f);
+            rv.setParams (decay, 1.0f, 0.3f, 0.02f, 0.0f);
             const int n = (int) (2.2 * sr);
             std::vector<float> in (n, 0.0f), wl (n), wr (n);
             in[0] = 1.0f;
@@ -532,7 +533,7 @@ int main()
     // 30s silence, every sample finite and bounded
     {
         PlateReverb rv; rv.prepare (sr);
-        rv.setParams (1.0f, 2.0f, 0.3f, 0.02f);
+        rv.setParams (1.0f, 2.0f, 0.3f, 0.02f, 0.0f);
         juce::Random rng (1234);
         const int nNoise = (int) (2.0 * sr);
         std::vector<float> in (nNoise), wl (nNoise), wr (nNoise);
@@ -558,7 +559,7 @@ int main()
     // over the first 2s < 0.9
     {
         PlateReverb rv; rv.prepare (sr);
-        rv.setParams (0.6f, 1.0f, 0.3f, 0.02f);
+        rv.setParams (0.6f, 1.0f, 0.3f, 0.02f, 0.0f);
         const int n = (int) (2.0 * sr);
         std::vector<float> in (n, 0.0f), wl (n), wr (n);
         in[0] = 1.0f;
@@ -577,7 +578,7 @@ int main()
         auto hfEnergy = [&] (float damp)
         {
             PlateReverb rv; rv.prepare (sr);
-            rv.setParams (0.6f, 1.0f, damp, 0.02f);
+            rv.setParams (0.6f, 1.0f, damp, 0.02f, 0.0f);
             const int n = (int) (1.0 * sr);
             std::vector<float> in (n, 0.0f), wl (n), wr (n);
             in[0] = 1.0f;
@@ -603,7 +604,7 @@ int main()
         for (int i = 0; i < n; ++i)
         {
             float size = juce::jmap ((float) i / (float) n, 0.5f, 2.0f);
-            rv.setParams (0.6f, size, 0.3f, 0.02f);
+            rv.setParams (0.6f, size, 0.3f, 0.02f, 0.0f);
             float x = rng.nextFloat() * 2.0f - 1.0f;
             rv.process (&x, &wl[(size_t) i], &wr[(size_t) i], 1);
             if (! std::isfinite (wl[(size_t) i]) || ! std::isfinite (wr[(size_t) i])) finite = false;
@@ -612,6 +613,42 @@ int main()
         bool ok = finite && maxAbs < 10.0f;
         printf ("[%s] reverb size sweep stable: finite=%d maxAbs=%.3f\n",
                 ok ? "PASS" : "FAIL", (int) finite, maxAbs);
+        fails += ok ? 0 : 1;
+    }
+
+    // 8) Metal knob (agent-wiki/plan-fixes.md §5): reduced input diffusion, a weaker
+    // decay-diffusion allpass, and no LFO excursion. Two synthetic proxies for "sounds
+    // more metallic" (peak-to-median spectral ratio; dominant-bin drift across time
+    // windows) gave CONTRADICTING directional signal when actually measured here --
+    // this is a genuinely perceptual, ears-only judgement (see gotchas.md), so the test
+    // only asserts what's mechanically verifiable: metal changes the response (it isn't
+    // a no-op) and stays stable across the full 0..1 range.
+    {
+        auto renderImpulse = [&] (float metal, std::vector<float>& wl)
+        {
+            PlateReverb rv; rv.prepare (sr);
+            rv.setParams (0.6f, 1.0f, 0.3f, 0.02f, metal);
+            const int n = (int) (1.0 * sr);
+            std::vector<float> in (n, 0.0f), wr (n);
+            in[0] = 1.0f;
+            wl.assign ((size_t) n, 0.0f);
+            rv.process (in.data(), wl.data(), wr.data(), n);
+        };
+
+        std::vector<float> wSmooth, wMetal;
+        renderImpulse (0.0f, wSmooth);
+        renderImpulse (1.0f, wMetal);
+        float diff = 0.0f, finiteMax = 0.0f;
+        bool finite = true;
+        for (size_t i = 0; i < wSmooth.size(); ++i)
+        {
+            diff = juce::jmax (diff, std::abs (wSmooth[i] - wMetal[i]));
+            finiteMax = juce::jmax (finiteMax, std::abs (wMetal[i]));
+            if (! std::isfinite (wMetal[i])) finite = false;
+        }
+        bool ok = finite && finiteMax < 10.0f && diff > 1.0e-4f;
+        printf ("[%s] reverb metal changes the response, stays stable: maxDiff=%.4f maxAbs=%.3f\n",
+                ok ? "PASS" : "FAIL", diff, finiteMax);
         fails += ok ? 0 : 1;
     }
 

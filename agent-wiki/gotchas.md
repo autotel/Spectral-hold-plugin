@@ -100,8 +100,18 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   pair. It never reads the two channels independently.
 - **Two detuned LFOs (0.50/0.61 Hz) modulate the tank's two "modulated allpass" read
   positions.** This is *the* thing standing between a smooth diffuse tail and a metallic
-  "boingy pipe" — if the reverb starts sounding metallic, check these weren't dropped or
-  set to the same rate before touching anything else.
+  "boingy pipe" — if the reverb starts sounding metallic unintentionally (Metal=0), check
+  these weren't dropped or set to the same rate before touching anything else.
+- **`revMetal` scales the same three things down toward zero** (input diffusion gains,
+  the decay-diffusion allpass magnitude, and the LFO excursion) via `PlateReverb::setParams`
+  — computed once per block into member fields (`inGain1..4`, `decayDiffusion1`,
+  `excursionSamples`), not baked as fixed namespace constants any more. **The perceptual
+  "sounds more metallic at Metal=1" direction was NOT confirmed by a synthetic proxy** —
+  two different measurements (peak-to-median spectral ratio; dominant-bin drift across
+  time windows) gave opposite directional signal when actually run. This is a genuinely
+  ears-only judgement; the test only asserts stability + that the knob measurably changes
+  the response. If you touch the Metal mapping, re-verify by listening, not by trusting a
+  new proxy metric.
 - Reverb lives in `PluginProcessor` (cross-channel, mono-summed), not per-engine — same
   category as the limiter.
 - **`revFeed` (reverb→hold feedback) was removed — don't re-add it via the input path.**

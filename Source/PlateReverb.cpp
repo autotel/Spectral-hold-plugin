@@ -73,7 +73,8 @@ void PlateReverb::prepare (double sampleRate)
     apB2.setup (tankCap (kApLenB2));
     delayB2.setup (tankCap (kDelayLenB2));
 
-    excursionSamples = kExcursion * srScale;
+    excursionBase = kExcursion * srScale;
+    excursionSamples = excursionBase;
     lfoIncA = juce::MathConstants<float>::twoPi * kLfoHzA / (float) sr;
     lfoIncB = juce::MathConstants<float>::twoPi * kLfoHzB / (float) sr;
 
@@ -98,13 +99,21 @@ void PlateReverb::reset()
     predelaySmoothed = predelaySamplesTarget;
 }
 
-void PlateReverb::setParams (float decay, float size, float damp, float predelaySec)
+void PlateReverb::setParams (float decay, float size, float damp, float predelaySec, float metal)
 {
     decayGain = juce::jmap (juce::jlimit (0.0f, 1.0f, decay), 0.25f, 0.98f);
     decayDiffusion2 = juce::jlimit (0.25f, 0.50f, decayGain + 0.15f);
     damping = juce::jlimit (0.0f, 1.0f, damp);
     sizeTarget = juce::jlimit (0.5f, 2.0f, size);
     predelaySamplesTarget = juce::jlimit (0.0f, 0.25f, predelaySec) * (float) sr;
+
+    const float m = juce::jlimit (0.0f, 1.0f, metal);
+    inGain1 = kInGain1 * (1.0f - 0.9f * m);
+    inGain2 = kInGain2 * (1.0f - 0.9f * m);
+    inGain3 = kInGain3 * (1.0f - 0.9f * m);
+    inGain4 = kInGain4 * (1.0f - 0.9f * m);
+    decayDiffusion1 = juce::jmap (m, kDecayDiffusion1, 0.20f); // 0.70 -> 0.20
+    excursionSamples = excursionBase * (1.0f - m);             // kills the LFO smear
 }
 
 void PlateReverb::process (const float* inMono, float* outL, float* outR, int numSamples)
@@ -118,10 +127,10 @@ void PlateReverb::process (const float* inMono, float* outL, float* outR, int nu
         float u = delayStep (predelay, predelaySmoothed, inMono[n]);
         bandwidthLp += kBandwidth * (u - bandwidthLp);
         u = bandwidthLp;
-        u = allpassStep (inAp1, kInLen1 * srScale, kInGain1, u);
-        u = allpassStep (inAp2, kInLen2 * srScale, kInGain2, u);
-        u = allpassStep (inAp3, kInLen3 * srScale, kInGain3, u);
-        u = allpassStep (inAp4, kInLen4 * srScale, kInGain4, u);
+        u = allpassStep (inAp1, kInLen1 * srScale, inGain1, u);
+        u = allpassStep (inAp2, kInLen2 * srScale, inGain2, u);
+        u = allpassStep (inAp3, kInLen3 * srScale, inGain3, u);
+        u = allpassStep (inAp4, kInLen4 * srScale, inGain4, u);
 
         // LFOs (detuned - what keeps the tail from ringing metallically)
         lfoPhaseA += lfoIncA;
@@ -138,7 +147,7 @@ void PlateReverb::process (const float* inMono, float* outL, float* outR, int nu
 
         // tank: figure-8, two cross-coupled halves
         const float inA = u + decayGain * lastOutB;
-        float a = allpassStep (modApA, kModLenA * sizeScale + modA, -kDecayDiffusion1, inA);
+        float a = allpassStep (modApA, kModLenA * sizeScale + modA, -decayDiffusion1, inA);
         a = delayStep (delayA1, kDelayLenA1 * sizeScale, a);
         dampLpA += (1.0f - damping) * (a - dampLpA);
         a = dampLpA * decayGain;
@@ -147,7 +156,7 @@ void PlateReverb::process (const float* inMono, float* outL, float* outR, int nu
         const float outA = a * decayGain;
 
         const float inB = u + decayGain * outA;
-        float b = allpassStep (modApB, kModLenB * sizeScale + modB, -kDecayDiffusion1, inB);
+        float b = allpassStep (modApB, kModLenB * sizeScale + modB, -decayDiffusion1, inB);
         b = delayStep (delayB1, kDelayLenB1 * sizeScale, b);
         dampLpB += (1.0f - damping) * (b - dampLpB);
         b = dampLpB * decayGain;
