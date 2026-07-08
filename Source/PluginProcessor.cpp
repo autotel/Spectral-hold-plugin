@@ -36,6 +36,7 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pOutput = apvts.getRawParameterValue ("output");
     pPhaseNoise = apvts.getRawParameterValue ("phaseNoise");
     pFreeze     = apvts.getRawParameterValue ("freeze");
+    pTranspose  = apvts.getRawParameterValue ("transpose");
     pLimThreshold = apvts.getRawParameterValue ("limThreshold");
     pLimRelease   = apvts.getRawParameterValue ("limRelease");
 
@@ -186,9 +187,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "revMetal", 1 }, "Reverb Metal",
         NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // less diffusion, no LFO smear
 
-    // --- P4 "Perform" (partial, interim): revFeed (Part A) + phaseNoise (moved out of P1
-    // by the B2 regroup above). Both get their final slots once B3/B4/B5 land transpose,
-    // spread and continuous phaseNoiseAmt (agent-wiki/plan-roadmap.md B0).
+    // --- P4 "Perform" (partial, interim): transpose (B3) + revFeed (Part A) + phaseNoise
+    // (moved out of P1 by the B2 regroup). Final target order (once B4/B5 land continuous
+    // phaseNoiseAmt and spread) is Transpose, Spread, Phase Noise, Reverb Feed -- see
+    // agent-wiki/plan-roadmap.md B0.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "transpose", 1 }, "Transpose",
+        NormalisableRange<float> (-12.0f, 12.0f), 0.0f,
+        AudioParameterFloatAttributes().withLabel ("st")));
+
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revFeed", 1 }, "Reverb Feed",
         NormalisableRange<float> (0.0f, 1.0f), 0.0f));
@@ -255,11 +262,23 @@ void SpectralHoldProcessor::setLiveMode (bool b)
         setLatencySamples (liveMode ? 0 : (1 << fftOrder.load()));
 }
 
-void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
     const int numCh = buffer.getNumChannels();
     const int numSamples = buffer.getNumSamples();
+
+    // Transpose MIDI (agent-wiki/plan-roadmap.md B3): monophonic, last-note priority; a
+    // note-off only clears midiNote if it matches the currently held note (so releasing an
+    // older, already-superseded note doesn't cancel the newer one).
+    for (const auto meta : midi)
+    {
+        const auto msg = meta.getMessage();
+        if (msg.isNoteOn())
+            midiNote = msg.getNoteNumber();
+        else if (msg.isNoteOff() && msg.getNoteNumber() == midiNote)
+            midiNote = -1;
+    }
 
     SpectralEngine::Params p;
     p.feed       = pFeed->load();
@@ -267,6 +286,10 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     p.ewLocation = pEwLocation->load();
     p.phaseNoise = pPhaseNoise->load() > 0.5f;
     p.freeze     = pFreeze->load() > 0.5f;
+    // note 60 (middle C) = no shift, so playing with no MIDI input matches the knob alone.
+    // Not clamped to the knob's +/-12 st DAW range -- playing further from middle C should
+    // keep transposing further, not flatten out at an octave.
+    p.transpose  = pTranspose->load() + (float) (midiNote >= 0 ? midiNote - 60 : 0);
     p.harmonize  = pHarmonize->load();
     p.harmWidth  = pHarmWidth->load();
     p.harmonic   = pHarmonic->load();

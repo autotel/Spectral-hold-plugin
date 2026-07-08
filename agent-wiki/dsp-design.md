@@ -213,6 +213,34 @@ see gotchas.md for why the *old* `revFeed` never worked). Replaces the removed f
   the wet tail even at `revMix = 0`, i.e. reverb as a silent hold-exciter); hard bypass
   (skip `reverb.process` entirely, bit-exact dry) requires **both** at 0.
 
+## Transpose (agent-wiki/plan-roadmap.md B3)
+Pitch-shifts the **output** of the held sound; `S`/`omega` (the held state) are never
+touched, so it's fully non-destructive — turning Transpose back to 0 instantly recovers the
+original pitch, same frame.
+
+- `transRatio = 2^(transpose/12)`; `transposing = |transpose| > 1e-3` gates the whole path
+  (default costs one branch, no extra work).
+- **Per-layer phase accumulator**, not a resample: each layer/bin keeps `transAcc[idx]`, an
+  *extra* phase offset advanced only while transposing:
+  `transAcc[idx] += omega[idx]·(transRatio − 1)`, wrapped to `[-π,π]`. The layer's
+  contribution to the transposed output is `sk · attL · exp(i·transAcc[idx])` — same
+  magnitude as the untransposed path (a pure phase rotation), so it doesn't touch loudness.
+  This is what makes the pitch shift itself (not just the bin it lands in): the *output*
+  bin's phase now advances at `omega·transRatio` per hop instead of `omega`.
+- **Bin remap:** the transposed per-bin sum is written into `synthScratch[k']` where
+  `k' = round(k · transRatio)` (dropped if `k' < 1` or `k' ≥ numBins`). This is what actually
+  moves energy to the new frequency — the accumulator above only keeps what lands there
+  phase-coherent. `synthScratch` is zeroed once per frame (only when transposing) and copied
+  into `fftData`/`dispScratch` **after** the full per-bin loop (can't write in place —
+  multiple source bins can map to bins the loop hasn't reached yet, or has already passed).
+- **Non-transposing path is untouched** (writes straight into `fftData`/`dispScratch` inside
+  the per-bin loop, exactly as before B3) — bit-exact at the default `transpose = 0`.
+- **MIDI** (`PluginProcessor`): monophonic, last-note priority. `midiNote` (plain member,
+  audio-thread only) is set on note-on, cleared on a note-off *matching the currently held
+  note* (so releasing an older, already-superseded note can't cancel a newer one). Effective
+  `p.transpose = knob + (midiNote>=0 ? midiNote-60 : 0)`, **not clamped** to the knob's
+  ±12 st DAW range — playing further from middle C should keep transposing further.
+
 ## East–West location field (continuous tone locations, plan v2 + location layers)
 Every bin/tone carries a **continuous location** `binLoc[k] ∈ [0,1]` alongside `S`/`omega`.
 The `ewLocation` knob (0 = East = legacy default, 1 = West) is a **listener/recorder

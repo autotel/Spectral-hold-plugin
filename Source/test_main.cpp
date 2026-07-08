@@ -263,6 +263,61 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // 4e) transpose (agent-wiki/plan-roadmap.md B3): a held 440 Hz tone, transpose=+12 st,
+    // should show its energy near 880 Hz (bin remap by ratio=2). Non-destructive: the held
+    // state itself is untouched, so turning transpose back off recovers the 440 Hz tone.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f;
+        double ph = 0.0; const double w = 2.0 * M_PI * 440.0 / sr;
+        std::vector<float> buf (block);
+        for (int b = 0; b < 50; ++b)
+        {
+            for (int i = 0; i < block; ++i) { buf[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
+            e.process (buf.data(), buf.data(), block, d);
+        }
+
+        const float refFreq = (float) sr / 4096.0f;
+        const int bin440 = (int) std::lround (440.0f / refFreq);
+        // must match the engine's own remap exactly (kPrime = round(k * ratio)) -- rounding
+        // 880/refFreq independently can land one bin off from round(bin440 * 2.0).
+        const int bin880 = (int) std::lround ((double) bin440 * 2.0);
+
+        auto measureAt = [&] (const SpectralEngine::Params& h, int bin)
+        {
+            // flush a few hops under the NEW params first -- copyDisplay returns whatever
+            // is currently in the snapshot regardless of whether a frame just ran, so
+            // reading immediately after switching params risks reading a stale frame from
+            // the previous params (same pattern as ewMeasure/holdRms above).
+            std::fill (buf.begin(), buf.end(), 0.0f);
+            for (int blk = 0; blk < 24; ++blk) e.process (buf.data(), buf.data(), block, h);
+            std::vector<float> m, ph2;
+            int n = 0;
+            for (int t = 0; t < 8 && n == 0; ++t)
+            {
+                std::fill (buf.begin(), buf.end(), 0.0f);
+                e.process (buf.data(), buf.data(), block, h);
+                n = e.copyDisplay (m, ph2);
+            }
+            return m[(size_t) bin];
+        };
+
+        SpectralEngine::Params h0; h0.feed = 0.0f; h0.loss = 0.0f; h0.transpose = 0.0f;
+        const float base440 = measureAt (h0, bin440);
+
+        SpectralEngine::Params h1; h1.feed = 0.0f; h1.loss = 0.0f; h1.transpose = 12.0f;
+        const float up880 = measureAt (h1, bin880);
+        const float up440 = measureAt (h1, bin440); // original bin should now be near-empty
+
+        const float back440 = measureAt (h0, bin440); // transpose off -- recovers original
+
+        bool ok = base440 > 1.0e-3f && up880 > base440 * 0.5f
+                  && up440 < base440 * 0.3f && back440 > base440 * 0.7f;
+        printf ("[%s] transpose +12st shifts to ~880Hz, non-destructive: 440base=%.4f 880up=%.4f 440up=%.4f 440restored=%.4f\n",
+                ok ? "PASS" : "FAIL", base440, up880, up440, back440);
+        fails += ok ? 0 : 1;
+    }
+
     // 5) brush edit: boosting a held band raises its level, cutting lowers it
     {
         eng.setOrder (12);

@@ -89,6 +89,18 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     brushLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (brushLabel);
 
+    // Transpose (agent-wiki/plan-roadmap.md B3): a DAW param, attached like the tab knobs,
+    // just laid out as a utility-row linear slider since it has no tab yet.
+    transposeSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    transposeSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 48, 16);
+    transposeSlider.setTextValueSuffix (" st");
+    addAndMakeVisible (transposeSlider);
+    transposeAttach = std::make_unique<SliderAttach> (proc.apvts, "transpose", transposeSlider);
+
+    transposeLabel.setText ("Transpose", juce::dontSendNotification);
+    transposeLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (transposeLabel);
+
     // GUI-only switches
     liveButton.setToggleState (proc.getLiveMode(), juce::dontSendNotification);
     liveButton.onClick = [this] { proc.setLiveMode (liveButton.getToggleState()); };
@@ -136,6 +148,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setInfo (liveButton,        "Report zero latency to the host (for live playing; disables delay compensation).");
     setInfo (keepButton,        "Save the held sound inside the session, so it's still ringing when the project reopens.");
     setInfo (brushSizeSlider,   "Drag on the display to boost/cut held tones. This sets the brush width.");
+    setInfo (transposeSlider,  "Pitch-shift the held sound (semitones), non-destructively. MIDI notes add to this, relative to middle C.");
     setInfo (shaperTab,         "Per-bin amplitude shaping: tilts, combs and more.");
     setInfo (harmonizeTab,      "Coupled-oscillator pitch interaction between held tones.");
     setInfo (reverbTab,         "Plate reverb on the output.");
@@ -262,6 +275,8 @@ void SpectralHoldEditor::resized()
     noiseButton.setBounds (bottom.removeFromLeft (100));
     liveButton.setBounds (bottom.removeFromLeft (96));
     keepButton.setBounds (bottom.removeFromLeft (64));
+    transposeSlider.setBounds (bottom.removeFromLeft (130));
+    transposeLabel.setBounds (bottom.removeFromLeft (68));
     brushSizeSlider.setBounds (bottom.removeFromRight (150));
     brushLabel.setBounds (bottom.removeFromRight (44));
 }

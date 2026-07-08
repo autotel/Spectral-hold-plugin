@@ -50,6 +50,10 @@ public:
         // Freeze (agent-wiki/plan-roadmap.md B2): stop time for the live input path only
         // (no feed, no frequency tracking, no decay). Aux/brush/shaper/harmonize keep running.
         bool freeze = false;
+
+        // Transpose (agent-wiki/plan-roadmap.md B3): pitch-shift the OUTPUT of the held
+        // sound without touching the held state (non-destructive). See dsp-design.md.
+        float transpose = 0.0f; // -12..+12 semitones
     };
 
     void prepare (double sampleRate, int maxFftOrder);
@@ -151,6 +155,12 @@ private:
                                           // recomputed each frame when the shaper is active;
                                           // the shaper's pivot/ratio is "shape what you hear"
     juce::Random rng;                     // phase-noise source (audio thread only)
+
+    // Transpose (agent-wiki/plan-roadmap.md B3): transAcc is a per-layer/bin accumulated
+    // extra phase offset (only advanced while transposing) that pitch-shifts the OUTPUT
+    // without touching S/omega; synthScratch is the per-frame remapped-bin output buffer.
+    std::vector<float> transAcc;                    // flat, kNumLayers*maxBins -- see li()
+    std::vector<std::complex<float>> synthScratch;   // length maxBins
 
     // harmonize peak scratch (preallocated; capped at kMaxPeaks)
     static constexpr int kMaxPeaks = 128;

@@ -60,6 +60,13 @@ private:
     juce::Label  brushLabel;
     juce::Slider brushSizeSlider; // GUI-only brush size, not a DAW parameter
 
+    // Transpose (agent-wiki/plan-roadmap.md B3): utility-row linear slider (not a rotary
+    // Knob) since it doesn't yet have a tab of its own -- P4 "Perform" is DAW-page-only
+    // until B4/B5 fill out a fourth GUI tab.
+    juce::Label  transposeLabel;
+    juce::Slider transposeSlider;
+    std::unique_ptr<SliderAttach> transposeAttach;
+
     // Ableton-style info bar: hovering any control shows its one-line description here.
     struct InfoListener : juce::MouseListener
     {

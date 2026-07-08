@@ -19,7 +19,7 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return "Spectral Hold"; }
-    bool acceptsMidi() const override  { return false; }
+    bool acceptsMidi() const override  { return true; } // Transpose MIDI (agent-wiki/plan-roadmap.md B3)
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override
@@ -90,6 +90,8 @@ private:
     std::atomic<float>* pOutput = nullptr;
     std::atomic<float>* pPhaseNoise = nullptr;
     std::atomic<float>* pFreeze = nullptr; // agent-wiki/plan-roadmap.md B2
+    std::atomic<float>* pTranspose = nullptr; // agent-wiki/plan-roadmap.md B3
+    int midiNote = -1; // last held note-on (monophonic, last-note priority); audio thread only
     std::atomic<float>* pLimThreshold = nullptr;
     std::atomic<float>* pLimRelease   = nullptr;
     std::atomic<float>* pHarmonize = nullptr;

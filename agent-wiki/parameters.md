@@ -12,9 +12,9 @@ moved to the interim P4):
   Harmonize's *master amount* closes this page — accepted so the shaper's own 7 params plus
   one harmonize knob hit exactly 8; the two harmonize *character* knobs live on page 3.
 - **P3 "Space"**: Harm Width, Harmonics (harmonic), Mix, Decay, Damp, Size, Predelay, Metal.
-- **P4 "Perform" (partial, interim)**: Reverb Feed (`revFeed`), Phase Noise. Both get their
-  final slots once B3 (Transpose), B4 (continuous Phase Noise amount) and B5 (Spread) land
-  — final target order is Transpose, Spread, Phase Noise, Reverb Feed (see plan-roadmap.md B0).
+- **P4 "Perform" (partial, interim)**: Transpose, Reverb Feed (`revFeed`), Phase Noise.
+  Final slots land once B4 (continuous Phase Noise amount) and B5 (Spread) do — final
+  target order is Transpose, Spread, Phase Noise, Reverb Feed (see plan-roadmap.md B0).
 
 Parameter **IDs are unchanged** by this grouping (only `createLayout()`'s call order moved)
 — saved sessions restore by ID, so this reorder is state-compatible.
@@ -53,6 +53,7 @@ description of whatever control the mouse is over (Ableton-style).
 | Predelay `revPredelay` | 0 .. 250 ms  | 20      | Delay before the reverb's input diffusers. |
 | Metal `revMetal`    | 0 .. 1         | 0.0     | Trades diffusion for a harder, more discrete reflection character: input diffusion gains shrink, the decay-diffusion allpass weakens, and the LFO excursion that smears the tank's resonances is scaled down to zero. See gotchas.md — the perceptual direction wasn't confirmed by a synthetic proxy, only by ear. |
 | Feed `revFeed`      | 0 .. 1         | 0.0     | Reverb → hold feedback. A second, **Feed-independent** injection path into the engine (not the main Feed knob) — the reverb's wet tail feeds the held spectrum even at Feed=0. Soft-ceilinged per bin so the closed loop (revFeed=1, Loss=0) converges instead of diverging. See [dsp-design.md](dsp-design.md#aux-input-path-reverb-feed-revfeed-agent-wikiplan-roadmapmd-part-a). |
+| Transpose `transpose` | -12 .. +12 st | 0.0   | Pitch-shifts the **output** of the held sound; the held state (`S`/`omega`) is untouched — non-destructive, reversible by ear instantly. GUI: utility-row linear slider (no tab of its own yet). MIDI notes add to this (note 60/middle C = no shift, monophonic last-note priority), unclamped — playing further from middle C keeps transposing further than the knob's own ±12 st range. See [dsp-design.md](dsp-design.md#transpose-agent-wikiplan-roadmapmd-b3). |
 | FT Size (GUI only)  | 1024 .. 8192   | 4096    | FFT size. `ComboBox`, powers of two. Not a DAW parameter. |
 | Live / 0 PDC (GUI only) | bool       | off     | Reports **0 latency** to the host (no plugin delay compensation) for live use. The real STFT latency is unchanged; the host just stops delay-compensating. |
 

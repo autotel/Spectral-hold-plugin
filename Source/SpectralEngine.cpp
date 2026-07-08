@@ -83,6 +83,8 @@ void SpectralEngine::prepare (double sr, int maxFftOrder)
     S.assign      (layeredSize, {});
     omega.assign  (layeredSize, 0.0f);
     binLoc.assign (layeredSize, 0.0f); // all tones start at East (legacy position)
+    transAcc.assign (layeredSize, 0.0f);
+    synthScratch.assign ((size_t) maxBins, {});
     Xs.assign  ((size_t) maxBins, {});
     expectedAdv.assign  ((size_t) maxBins, 0.0f);
     prevPhase.assign    ((size_t) maxBins, 0.0f);
@@ -146,6 +148,7 @@ void SpectralEngine::reset()
     std::fill (Xs.begin(), Xs.end(), std::complex<float> {});
     std::fill (prevPhase.begin(), prevPhase.end(), 0.0f);
     std::fill (binLoc.begin(), binLoc.end(), 0.0f); // tones re-home to East (legacy)
+    std::fill (transAcc.begin(), transAcc.end(), 0.0f);
     // start every layer at bin centre until the input is measured
     for (int l = 0; l < kNumLayers; ++l)
         std::copy (expectedAdv.begin(), expectedAdv.begin() + maxBins, omega.begin() + (long) li (l, 0));
@@ -261,6 +264,14 @@ void SpectralEngine::processFrame (const Params& p)
     const float twoPi     = juce::MathConstants<float>::twoPi;
     constexpr float kTrackThresh = 1.0e-3f;
 
+    // Transpose (agent-wiki/plan-roadmap.md B3): pitch-shift the OUTPUT of the held sound
+    // without touching the held state (S/omega stay untouched -- non-destructive). See the
+    // per-layer transAcc accumulation below and the bin remap at the end of this loop.
+    const float transRatio = std::exp2 (p.transpose / 12.0f);
+    const bool  transposing = std::abs (p.transpose) > 1.0e-3f;
+    if (transposing)
+        std::fill (synthScratch.begin(), synthScratch.begin() + numBins, std::complex<float> {});
+
     // --- spectral update
     for (int k = 0; k < numBins; ++k)
     {
@@ -357,6 +368,7 @@ void SpectralEngine::processFrame (const Params& p)
 
         // --- per-layer update: permanent shaper, rotate, (routed) inject, localised decay
         std::complex<float> mixOut {};
+        std::complex<float> mixOutT {}; // transposed-output accumulator (see "transposing" below)
         for (int l = 0; l < kNumLayers; ++l)
         {
             const size_t idx = li (l, k);
@@ -377,6 +389,16 @@ void SpectralEngine::processFrame (const Params& p)
                     e *= juce::jmax (0.0f, 1.0f - std::abs (S[idx]) / permCeil);
                 }
                 S[idx] *= std::exp (e);
+            }
+
+            // Transpose (agent-wiki/plan-roadmap.md B3): accumulate an extra per-layer phase
+            // offset so the OUTPUT advances at omega*ratio while the held state S/omega is
+            // untouched (non-destructive). Only tracked while transposing to avoid drift
+            // building up unnoticed at ratio=1.
+            if (transposing)
+            {
+                transAcc[idx] += omega[idx] * (transRatio - 1.0f);
+                transAcc[idx] -= twoPi * std::round (transAcc[idx] / twoPi); // wrap to [-pi,pi]
             }
 
             // free-run phasor at the tracked frequency (+ optional phase noise)
@@ -424,13 +446,37 @@ void SpectralEngine::processFrame (const Params& p)
 
             // output: this layer's held tone heard from the listener position
             mixOut += sk * attL;
+            if (transposing)
+                mixOutT += sk * attL * std::polar (1.0f, transAcc[idx]);
         }
 
-        // momentary-shaped mix of all layers -- the audible output
-        const std::complex<float> outBin = mixOut * gOut;
-        fftData[(size_t) (2 * k)]     = outBin.real();
-        fftData[(size_t) (2 * k + 1)] = outBin.imag();
-        dispScratch[(size_t) k] = outBin;
+        // momentary-shaped mix of all layers -- the audible output. Non-transposing path
+        // is bit-exact unchanged (writes straight into fftData/dispScratch); transposing
+        // path accumulates into synthScratch at the shifted bin and is copied out below.
+        if (! transposing)
+        {
+            const std::complex<float> outBin = mixOut * gOut;
+            fftData[(size_t) (2 * k)]     = outBin.real();
+            fftData[(size_t) (2 * k + 1)] = outBin.imag();
+            dispScratch[(size_t) k] = outBin;
+        }
+        else
+        {
+            const std::complex<float> outBinT = mixOutT * gOut;
+            const int kPrime = (int) std::lround ((double) k * (double) transRatio);
+            if (kPrime >= 1 && kPrime < numBins)
+                synthScratch[(size_t) kPrime] += outBinT;
+        }
+    }
+
+    if (transposing)
+    {
+        for (int k = 0; k < numBins; ++k)
+        {
+            fftData[(size_t) (2 * k)]     = synthScratch[(size_t) k].real();
+            fftData[(size_t) (2 * k + 1)] = synthScratch[(size_t) k].imag();
+            dispScratch[(size_t) k]       = synthScratch[(size_t) k];
+        }
     }
 
     // --- snapshot for the GUI (try-lock; skip if the editor is reading)
