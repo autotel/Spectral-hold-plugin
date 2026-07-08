@@ -84,6 +84,16 @@ public:
     static constexpr float kBrushMaxFactor = 8.0f; // gain factor at full strength/centre
     static constexpr float kBrushRate = 0.10f;     // per-tick exponent scale (brush speed)
 
+    // Hold serialization (agent-wiki/plan-roadmap.md B1): S/omega/binLoc for every layer,
+    // so the held sound can survive a session save/reload (or an undo snapshot, see B6).
+    // writeHold() must be called with the processor's callback lock held (it reads live
+    // audio-thread state with no lock of its own -- see PluginProcessor::getStateInformation).
+    void writeHold (juce::MemoryOutputStream& out) const;
+    // Queues a blob (message thread) to be applied on the audio thread at the next frame
+    // boundary. If the blob's FFT order doesn't match the engine's current order, it is
+    // kept pending until a matching setOrder() lands (or discarded if none is queued).
+    void queueHoldRestore (const void* data, size_t size);
+
 private:
     void applyPendingOrder();
     void configure (int fftOrder);
@@ -158,6 +168,12 @@ private:
     struct BrushOp { float centreFreq; float strength; float sigmaOct; };
     juce::CriticalSection brushLock;
     std::vector<BrushOp> brushPending, brushScratch;
+
+    // Hold restore queue (message thread -> audio thread), see queueHoldRestore().
+    void applyPendingHold();
+    juce::CriticalSection holdLock;
+    juce::MemoryBlock pendingHold;
+    std::atomic<bool> holdPending { false };
 
     JUCE_LEAK_DETECTOR (SpectralEngine)
 };

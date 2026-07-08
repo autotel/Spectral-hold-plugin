@@ -175,6 +175,7 @@ void SpectralEngine::process (const float* in, const float* aux, float* out, int
             hopCount = 0;
             processFrame (p);
             applyPendingOrder(); // safe only between frames
+            applyPendingHold();  // safe only between frames, see queueHoldRestore()
         }
     }
 }
@@ -736,6 +737,103 @@ void SpectralEngine::applyHarmonize (const Params& p, int layer, bool isFirstLay
         const int vac = (s > 0) ? (k - kPad) : (k + kPad);
         S[li (layer, vac)] = std::complex<float> {};
         omega[li (layer, vac)] = expectedAdv[(size_t) vac];
+    }
+}
+
+// Hold serialization (agent-wiki/plan-roadmap.md B1): S/omega/binLoc for every layer, so
+// the held sound can survive a session save/reload (or an undo snapshot, see B6). Format
+// (all little-endian, via juce::OutputStream/InputStream): int32 version=1, int32 order,
+// int32 kNumLayers, int32 numBins, then per layer: numBins*(re,im) floats for S, numBins
+// floats for omega, numBins floats for binLoc.
+void SpectralEngine::writeHold (juce::MemoryOutputStream& out) const
+{
+    out.writeInt (1); // version
+    out.writeInt (order);
+    out.writeInt (kNumLayers);
+    out.writeInt (numBins);
+    for (int l = 0; l < kNumLayers; ++l)
+    {
+        for (int k = 0; k < numBins; ++k)
+        {
+            const auto& s = S[li (l, k)];
+            out.writeFloat (s.real());
+            out.writeFloat (s.imag());
+        }
+        for (int k = 0; k < numBins; ++k)
+            out.writeFloat (omega[li (l, k)]);
+        for (int k = 0; k < numBins; ++k)
+            out.writeFloat (binLoc[li (l, k)]);
+    }
+}
+
+void SpectralEngine::queueHoldRestore (const void* data, size_t size)
+{
+    const juce::ScopedLock sl (holdLock);
+    pendingHold.setSize (0);
+    pendingHold.append (data, size);
+    holdPending.store (true);
+}
+
+void SpectralEngine::applyPendingHold()
+{
+    if (! holdPending.load())
+        return;
+
+    juce::MemoryBlock blob;
+    {
+        const juce::ScopedTryLock stl (holdLock);
+        if (! stl.isLocked())
+            return; // never block the audio thread; try again next frame
+        blob.swapWith (pendingHold);
+        holdPending.store (false);
+    }
+
+    constexpr size_t kHeaderBytes = 4 * sizeof (int32_t);
+    if (blob.getSize() < kHeaderBytes)
+        return; // malformed/short: discard
+
+    juce::MemoryInputStream in (blob, false);
+    const int32_t version     = in.readInt();
+    const int32_t blobOrder   = in.readInt();
+    const int32_t blobLayers  = in.readInt();
+    const int32_t blobBins    = in.readInt();
+
+    if (version != 1 || blobLayers != kNumLayers || blobBins <= 0)
+        return; // format mismatch: discard
+
+    if (blobOrder != order)
+    {
+        // Order mismatch: if a fresh setOrder() is still queued (applied just before this
+        // call, next frame), keep the blob pending for when it lands; otherwise it's stale
+        // (or was never going to match), discard it.
+        if (pendingOrder.load() >= 0)
+        {
+            const juce::ScopedLock sl (holdLock);
+            pendingHold.swapWith (blob);
+            holdPending.store (true);
+        }
+        return;
+    }
+    if (blobBins != numBins)
+        return; // order matched but bin count didn't -- shouldn't happen; guard anyway
+
+    const size_t perLayerBytes = (size_t) blobBins * 4 * sizeof (float); // re,im,omega,loc
+    const size_t totalNeeded = kHeaderBytes + (size_t) blobLayers * perLayerBytes;
+    if (blob.getSize() < totalNeeded)
+        return; // malformed/short: discard
+
+    for (int l = 0; l < blobLayers; ++l)
+    {
+        for (int k = 0; k < blobBins; ++k)
+        {
+            const float re = in.readFloat();
+            const float im = in.readFloat();
+            S[li (l, k)] = { re, im };
+        }
+        for (int k = 0; k < blobBins; ++k)
+            omega[li (l, k)] = in.readFloat();
+        for (int k = 0; k < blobBins; ++k)
+            binLoc[li (l, k)] = in.readFloat();
     }
 }
 

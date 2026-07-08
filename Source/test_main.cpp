@@ -120,6 +120,90 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // 4b) hold serialization roundtrip (agent-wiki/plan-roadmap.md B1): capture the held
+    // state, reset (silence), restore it, and confirm the tail comes back.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f;
+        double ph = 0.0; const double w = 2.0 * M_PI * 1000.0 / sr;
+        std::vector<float> buf (block);
+        for (int b = 0; b < 50; ++b)
+        {
+            for (int i = 0; i < block; ++i) { buf[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
+            e.process (buf.data(), buf.data(), block, d);
+        }
+
+        juce::MemoryOutputStream blob;
+        e.writeHold (blob);
+
+        e.reset(); // discard the held state
+        SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f;
+        std::fill (buf.begin(), buf.end(), 0.0f);
+        for (int b = 0; b < 24; ++b) e.process (buf.data(), buf.data(), block, h);
+        const float afterReset = rms (buf.data(), block);
+
+        e.queueHoldRestore (blob.getData(), blob.getDataSize());
+        bool finite = true; float afterRestore = 0.0f;
+        for (int b = 0; b < 24; ++b)
+        {
+            std::fill (buf.begin(), buf.end(), 0.0f);
+            e.process (buf.data(), buf.data(), block, h);
+            if (! finiteAll (buf.data(), block)) finite = false;
+            afterRestore = rms (buf.data(), block);
+        }
+
+        bool ok = finite && afterReset < 1.0e-4f && afterRestore > 1.0e-3f;
+        printf ("[%s] hold serialization roundtrip: afterReset=%.2e afterRestore=%.4f\n",
+                ok ? "PASS" : "FAIL", afterReset, afterRestore);
+        fails += ok ? 0 : 1;
+    }
+
+    // 4c) hold restore discards a blob whose FFT order doesn't match and no order change
+    // is queued -- the engine's existing held state is left undisturbed.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f;
+        double ph = 0.0; const double w = 2.0 * M_PI * 1000.0 / sr;
+        std::vector<float> buf (block);
+        for (int b = 0; b < 50; ++b)
+        {
+            for (int i = 0; i < block; ++i) { buf[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
+            e.process (buf.data(), buf.data(), block, d);
+        }
+        SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f;
+        auto measure = [&]
+        {
+            float r = 0.0f;
+            for (int b = 0; b < 24; ++b)
+            {
+                std::fill (buf.begin(), buf.end(), 0.0f);
+                e.process (buf.data(), buf.data(), block, h);
+                r = rms (buf.data(), block);
+            }
+            return r;
+        };
+        const float before = measure();
+
+        juce::MemoryOutputStream blob;
+        e.writeHold (blob);
+        juce::MemoryBlock mb (blob.getData(), blob.getDataSize());
+        static_cast<juce::int32*> (mb.getData())[1] = 999; // corrupt the order field
+        e.queueHoldRestore (mb.getData(), mb.getSize());
+
+        bool finite = true; float after = 0.0f;
+        for (int b = 0; b < 24; ++b)
+        {
+            std::fill (buf.begin(), buf.end(), 0.0f);
+            e.process (buf.data(), buf.data(), block, h);
+            if (! finiteAll (buf.data(), block)) finite = false;
+            after = rms (buf.data(), block);
+        }
+        bool ok = finite && after > before * 0.5f; // discarded, original held state intact
+        printf ("[%s] hold restore wrong order discarded: before=%.4f after=%.4f\n",
+                ok ? "PASS" : "FAIL", before, after);
+        fails += ok ? 0 : 1;
+    }
+
     // 5) brush edit: boosting a held band raises its level, cutting lowers it
     {
         eng.setOrder (12);

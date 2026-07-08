@@ -89,6 +89,10 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     liveButton.onClick = [this] { proc.setLiveMode (liveButton.getToggleState()); };
     addAndMakeVisible (liveButton);
 
+    keepButton.setToggleState (proc.getKeepSound(), juce::dontSendNotification);
+    keepButton.onClick = [this] { proc.setKeepSound (keepButton.getToggleState()); };
+    addAndMakeVisible (keepButton);
+
 
     // info bar (Ableton-style): hover any control for a one-line explanation
     infoListener.bar = &infoBar;
@@ -124,6 +128,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setInfo (noiseButton,       "Adds shimmer by jittering each tone's phase. Never detunes permanently.");
     setInfo (sizeBox,           "Spectral resolution vs time response. Changing it resets the held sound.");
     setInfo (liveButton,        "Report zero latency to the host (for live playing; disables delay compensation).");
+    setInfo (keepButton,        "Save the held sound inside the session, so it's still ringing when the project reopens.");
     setInfo (brushSizeSlider,   "Drag on the display to boost/cut held tones. This sets the brush width.");
     setInfo (shaperTab,         "Per-bin amplitude shaping: tilts, combs and more.");
     setInfo (harmonizeTab,      "Coupled-oscillator pitch interaction between held tones.");
@@ -246,6 +251,7 @@ void SpectralHoldEditor::resized()
     sizeLabel.setBounds (bottom.removeFromRight (50));
     noiseButton.setBounds (bottom.removeFromLeft (100));
     liveButton.setBounds (bottom.removeFromLeft (96));
+    keepButton.setBounds (bottom.removeFromLeft (64));
     brushSizeSlider.setBounds (bottom.removeFromRight (150));
     brushLabel.setBounds (bottom.removeFromRight (44));
 }

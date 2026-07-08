@@ -48,9 +48,16 @@ delayed by the engine's `fftSize` so dry and wet stay time-aligned.
   editor holds the lock, never the reverse.
 
 ## Parameters & state
-- DAW-facing params live in `apvts` (`feed`, `loss`, `filterAmt`, `filterTone`, `attack`).
+- DAW-facing params live in `apvts` (see [parameters.md](parameters.md) for the full list).
 - FFT order is **not** in the APVTS (GUI-only by spec). It is saved/restored manually in
-  `get/setStateInformation` as a `fftOrder` property on the state tree.
+  `get/setStateInformation` as a `fftOrder` property on the state tree, alongside `liveMode`,
+  `uiTab`, and `keepSound` (all GUI-only, same mechanism).
+- **Held state (agent-wiki/plan-roadmap.md B1):** when `keepSound` is on, `getStateInformation`
+  writes each engine's `S`/`omega`/`binLoc` (`SpectralEngine::writeHold`) into a
+  gzip-compressed, base64-encoded `holdN` property (N = channel index) on the state tree.
+  `setStateInformation` decodes and queues it back in via `queueHoldRestore` — applied on the
+  audio thread at the next frame boundary, **after** `setFftOrder()` has landed (the restore
+  is gated on the blob's FFT order matching the engine's current order).
 
 ## Identity
 Plugin code `Sphd`, manufacturer `Jqna`, company `autotel`. Formats: VST3 + Standalone.

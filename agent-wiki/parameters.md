@@ -93,6 +93,9 @@ size-knob-pitch-bend behavior.
 - **FT size** range is `kMinFftOrder=10 .. kMaxFftOrder=13` (orders, i.e. log2). Engines
   preallocate at the max order; changing size never allocates on the audio thread.
 - Changing FT size **resets** the held state and changes plugin latency. Expected.
-- **Live** and the active tab are GUI-only values persisted in the state tree (like FT size),
-  not APVTS params; `setStateInformation` restores them. (*Save sound* was removed — the held
-  spectral state is no longer serialised.)
+- **Live**, **Keep**, and the active tab are GUI-only values persisted in the state tree
+  (like FT size), not APVTS params; `setStateInformation` restores them.
+- **Keep** (agent-wiki/plan-roadmap.md B1, default **on**): saves the held spectral state
+  inside the session (gzip'd + base64'd per channel, `SpectralEngine::writeHold`/
+  `queueHoldRestore`), so a frozen sound survives save/reopen. Off = old behaviour (silent
+  on reload). ~100–500 KB per session when on, depending on FT size.

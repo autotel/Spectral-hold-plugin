@@ -53,6 +53,7 @@ private:
 
     // GUI-only switches (persisted by the processor, not DAW parameters)
     juce::ToggleButton liveButton { "Live (0 PDC)" };
+    juce::ToggleButton keepButton { "Keep" }; // agent-wiki/plan-roadmap.md B1: save held state
 
     juce::Label  brushLabel;
     juce::Slider brushSizeSlider; // GUI-only brush size, not a DAW parameter

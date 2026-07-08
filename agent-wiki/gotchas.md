@@ -157,8 +157,10 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   location-gained output). Knob at 0 with everything at 0 → all weights 1 → legacy.
 - **One knob records and plays.** With Feed > 0 you paint at the knob position; to audition
   without overwriting, set Feed = 0. By design.
-- **`Save sound` was removed** on this branch — the held state is no longer serialised. If
-  you see references to `writeAudioState`/`audioState`, they're gone.
+- **`Save sound` (the old `writeAudioState`/`audioState` feature) was removed and later
+  superseded.** The held state IS serialised again, differently — see "Hold serialization"
+  below (agent-wiki/plan-roadmap.md B1). If you see references to `writeAudioState`, they're
+  gone for good; `SpectralEngine::writeHold`/`queueHoldRestore` is the current mechanism.
 
 ## Location layers (exp/loclayers — fixes the per-bin steal above)
 - **The "per-bin locations can't hold two same-frequency tones" limit above is fixed.**
@@ -186,6 +188,27 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   recorded; now it doesn't). If you're diffing test output against an old run and a test
   name is missing, that's why; the new case is "ew location layers: coexist without
   stealing".
+
+## Hold serialization (agent-wiki/plan-roadmap.md B1, `exp/roadmap`)
+- **`writeHold()` takes no lock of its own** — it reads live audio-thread state (`S`,
+  `omega`, `binLoc`), so the caller (`PluginProcessor::getStateInformation`) must hold
+  `getCallbackLock()` for the duration of the call. Don't call it unlocked.
+- **Restore is queued, not immediate.** `queueHoldRestore()` (message thread) stashes the
+  blob; it's applied on the audio thread at the next frame boundary, same pattern as
+  `queueBrush`/`setOrder`. Don't expect the engine's state to change synchronously.
+- **Order gate.** A restored blob only applies if its FFT order matches the engine's
+  *current* order. `setStateInformation` calls `setFftOrder()` **before** queuing the hold
+  restores specifically so the order lands first; if you reorder that, restores whose
+  order differs from the default will silently get dropped (the "no pendingOrder queued"
+  discard path, not a bug in isolation — just wrong call order).
+- **Format has no forward-compat plan.** `version` is checked for equality (`!= 1` discards
+  the whole blob); there's no migration path yet. If you change the wire format, bump
+  `version` and decide then whether old blobs should be discarded (current behaviour) or
+  migrated.
+- **`keepSound` gates the save, not the restore.** Restoring an old blob from a session
+  works even if `keepSound` is later turned off; turning it off only stops writing *new*
+  blobs. Turning it off does not clear the currently-held sound either — it's a save-time
+  switch, not a mute.
 
 ## Integration decisions (exp/integration)
 - **Harmonize has no momentary/permanent mode knob on purpose.** It must rewrite `omega`

@@ -52,6 +52,11 @@ public:
     void setUiTab (int t) { uiTab = t; }
     int  getUiTab() const { return uiTab; }
 
+    // Whether the held spectral state is saved inside the session (agent-wiki/plan-roadmap.md
+    // B1). GUI-only, persisted in state (like liveMode/uiTab, not an APVTS param). Default on.
+    void setKeepSound (bool b) { keepSound = b; }
+    bool getKeepSound() const  { return keepSound; }
+
     // Snapshot for the spectrum display (channel 0). Returns numBins or 0.
     int getDisplaySnapshot (std::vector<float>& mag, std::vector<float>& phase,
                             double& sr, int& size);
@@ -120,6 +125,7 @@ private:
     // GUI-only switches (persisted manually, see get/setStateInformation)
     bool liveMode = false;
     int  uiTab = 0;
+    bool keepSound = true; // agent-wiki/plan-roadmap.md B1: save the held state in the session
 
     // slow linked limiter state
     float limEnv  = 0.0f;

@@ -395,6 +395,29 @@ void SpectralHoldProcessor::getStateInformation (juce::MemoryBlock& dest)
     state.setProperty ("fftOrder", fftOrder.load(), nullptr);
     state.setProperty ("liveMode", liveMode, nullptr);
     state.setProperty ("uiTab", uiTab, nullptr);
+    state.setProperty ("keepSound", keepSound, nullptr);
+
+    // Hold serialization (agent-wiki/plan-roadmap.md B1): the held spectral state is the
+    // whole product, so it's saved inside the session unless the user turns Keep off.
+    // gzip'd + base64'd into a ValueTree property, one per engine/channel.
+    if (keepSound && prepared)
+    {
+        const juce::ScopedLock sl (getCallbackLock()); // writeHold() reads live audio-thread state
+        for (size_t ch = 0; ch < engines.size(); ++ch)
+        {
+            juce::MemoryOutputStream raw;
+            engines[ch].writeHold (raw);
+
+            juce::MemoryOutputStream gz;
+            {
+                juce::GZIPCompressorOutputStream gzOut (gz, 9);
+                gzOut.write (raw.getData(), raw.getDataSize());
+            } // flushes/finalises the gzip stream on scope exit
+
+            state.setProperty ("hold" + juce::String ((int) ch),
+                                juce::Base64::toBase64 (gz.getData(), gz.getDataSize()), nullptr);
+        }
+    }
 
     std::unique_ptr<juce::XmlElement> xml (state.createXml());
     copyXmlToBinary (*xml, dest);
@@ -411,9 +434,32 @@ void SpectralHoldProcessor::setStateInformation (const void* data, int size)
 
     setLiveMode    ((bool) tree.getProperty ("liveMode", false));
     uiTab         = juce::jlimit (0, 2, (int) tree.getProperty ("uiTab", 0));
+    keepSound     = (bool) tree.getProperty ("keepSound", true);
 
+    // order must land before the hold restore below -- queueHoldRestore()'s blob only
+    // applies once the engine's order matches the blob's (see applyPendingHold()).
     const int ord = (int) tree.getProperty ("fftOrder", fftOrder.load());
     setFftOrder (ord);
+
+    // Missing "holdN" properties = an old session (or Keep was off when it was saved) --
+    // no-op, engines just start from silence as before B1.
+    for (size_t ch = 0; ch < engines.size(); ++ch)
+    {
+        const juce::String key = "hold" + juce::String ((int) ch);
+        if (! tree.hasProperty (key))
+            continue;
+
+        juce::MemoryOutputStream gzOut;
+        if (! juce::Base64::convertFromBase64 (gzOut, tree.getProperty (key).toString()))
+            continue;
+
+        juce::MemoryInputStream gzIn (gzOut.getMemoryBlock(), false);
+        juce::GZIPDecompressorInputStream gzDec (gzIn);
+        juce::MemoryOutputStream raw;
+        raw.writeFromInputStream (gzDec, -1);
+
+        engines[ch].queueHoldRestore (raw.getData(), raw.getDataSize());
+    }
 }
 
 juce::AudioProcessorEditor* SpectralHoldProcessor::createEditor()
