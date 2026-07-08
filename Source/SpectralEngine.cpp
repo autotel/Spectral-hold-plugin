@@ -249,9 +249,14 @@ void SpectralEngine::processFrame (const Params& p)
     // instead of building up by 1/(1-lossDecay). Floored so capture still works at loss=0.
     // (Uses the un-localised rate: freshly-fed bins sit at the listener, att~1.)
     const float injScale = juce::jmax (kInjFloor, 1.0f - lossDecay);
-    const float feed    = p.feed * injScale;
-    const float trackW  = p.feed; // input's influence on the held *frequency* follows Feed,
-                                  // so feed=0 fully freezes (no input phase leak)
+    // Freeze (agent-wiki/plan-roadmap.md B2) stops time for the LIVE input path: no feed,
+    // no frequency tracking. It does NOT touch the aux (revFeed) path, brush, shaper or
+    // harmonize -- those are separate modules that keep running (freeze stops input, not
+    // editing). decayL below is separately forced to 1 per-layer for the same reason.
+    const float feed    = p.freeze ? 0.0f : p.feed * injScale;
+    const float trackW  = p.freeze ? 0.0f : p.feed; // input's influence on the held
+                                  // *frequency* follows Feed, so feed=0 fully freezes
+                                  // (no input phase leak)
     const float refFreq   = (float) sampleRate / (float) fftSize; // freq of bin 1
     const float twoPi     = juce::MathConstants<float>::twoPi;
     constexpr float kTrackThresh = 1.0e-3f;
@@ -413,7 +418,7 @@ void SpectralEngine::processFrame (const Params& p)
 
             // loss is localised: a layer at the knob decays at the set rate; a far one is
             // spared (decay -> 1). att==1 everywhere at knob==0 -> legacy single-buffer rate.
-            const float decayL = juce::jmax (kDecayFloor, std::exp (-lossRate * attL));
+            const float decayL = p.freeze ? 1.0f : juce::jmax (kDecayFloor, std::exp (-lossRate * attL));
             sk *= decayL;
             S[idx] = sk;
 

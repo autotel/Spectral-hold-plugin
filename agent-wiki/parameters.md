@@ -4,16 +4,17 @@ DAW-facing parameters are defined in `SpectralHoldProcessor::createLayout()`.
 The engine consumes them via `SpectralEngine::Params`. FFT size is separate (GUI-only).
 
 **Creation order = host page order.** Push/Maschine bank 8 consecutive params per page, so
-`createLayout()` order is the grouping — 25 params, three full pages of 8 plus a page-4
-opener:
-- **P1 "Hold"**: Feed, Loss, E↔W, Dry/Wet, Output, Limiter Threshold, Limiter Release, Phase Noise.
+`createLayout()` order is the grouping — 26 params, three full pages of 8 plus a page-4
+opener (regrouped by agent-wiki/plan-roadmap.md B0/B2 — freeze now closes P1, phaseNoise
+moved to the interim P4):
+- **P1 "Hold"**: Feed, Loss, E↔W, Dry/Wet, Output, Limiter Threshold, Limiter Release, **Freeze**.
 - **P2 "Shaper"**: Amount, Shape, Freq, Width, Count, Level, Feed (shapeMode), Harmonize.
   Harmonize's *master amount* closes this page — accepted so the shaper's own 7 params plus
   one harmonize knob hit exactly 8; the two harmonize *character* knobs live on page 3.
 - **P3 "Space"**: Harm Width, Harmonics (harmonic), Mix, Decay, Damp, Size, Predelay, Metal.
-- **P4 (partial, slot 1/8)**: Reverb Feed (`revFeed`) — appended last, see below. Accepted as
-  an interim partial page on `main`; `agent-wiki/plan-roadmap.md` Part B regroups pages
-  (adds Freeze/Transpose/Spread/etc.) once those land.
+- **P4 "Perform" (partial, interim)**: Reverb Feed (`revFeed`), Phase Noise. Both get their
+  final slots once B3 (Transpose), B4 (continuous Phase Noise amount) and B5 (Spread) land
+  — final target order is Transpose, Spread, Phase Noise, Reverb Feed (see plan-roadmap.md B0).
 
 Parameter **IDs are unchanged** by this grouping (only `createLayout()`'s call order moved)
 — saved sessions restore by ID, so this reorder is state-compatible.
@@ -33,6 +34,7 @@ description of whatever control the mouse is over (Ableton-style).
 | Output `output`     | 0 .. 2         | 1.0     | Final output level (linear gain), applied **before** the limiter so it still protects ±1. |
 | Thresh `limThreshold` | -24 .. 0 dB  | 0       | Output limiter ceiling. The linked limiter pulls the level down to this; at the default 0 dB it's exactly the old fixed "don't clip ±1" behaviour. |
 | Release `limRelease` | 50 .. 5000 ms | 1200   | How fast the limiter recovers after pulling down. Attack is fixed (5 ms, not exposed) — always fast enough to catch peaks. |
+| Freeze `freeze`     | bool           | off     | Stops time for the **live input path only**: no feed, no frequency tracking, no decay (loss is bypassed, `decayL=1`). Brush, shaper, harmonize and the reverb-feed (`revFeed`) aux path keep running — freeze stops input, not editing. See [dsp-design.md](dsp-design.md). |
 | Phase Noise `phaseNoise` | bool      | off     | When on, injects ±`kPhaseNoise` rad of per-frame random jitter into each bin's phase advance (shimmer/roughness). Non-accumulating — does not permanently detune. |
 | Harmonize `harmonize` | 0 .. 0.1   | 0.0     | Master amount of coupled-oscillator pitch interaction. See [harmonize.md](harmonize.md). Inherently *permanent* (no mode knob — see gotchas.md). |
 | Width `harmWidth`     | 0.01 .. 3 oct | 0.5  | σ of the nearness-influence curve. |

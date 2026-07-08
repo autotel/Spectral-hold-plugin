@@ -46,6 +46,10 @@ public:
         // Aux (reverb-feedback) input: a second, Feed-independent injection path. See
         // agent-wiki/plan-roadmap.md Part A / dsp-design.md "Aux input path".
         float revFeed = 0.0f;       // 0..1 aux injection amount
+
+        // Freeze (agent-wiki/plan-roadmap.md B2): stop time for the live input path only
+        // (no feed, no frequency tracking, no decay). Aux/brush/shaper/harmonize keep running.
+        bool freeze = false;
     };
 
     void prepare (double sampleRate, int maxFftOrder);

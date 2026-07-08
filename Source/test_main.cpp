@@ -204,6 +204,65 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // 4d) freeze (agent-wiki/plan-roadmap.md B2): with freeze=true and loss=1.0 (which
+    // would normally decay fast), the held level stays ~constant across silence -- no
+    // decay, no injection. freeze=false at the default params stays bit-exact vs before.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f;
+        double ph = 0.0; const double w = 2.0 * M_PI * 1000.0 / sr;
+        std::vector<float> buf (block);
+        for (int b = 0; b < 50; ++b)
+        {
+            for (int i = 0; i < block; ++i) { buf[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
+            e.process (buf.data(), buf.data(), block, d);
+        }
+
+        SpectralEngine::Params f; f.feed = 1.0f; f.loss = 1.0f; f.freeze = true; // loss would
+                                                                                  // normally decay fast
+        std::fill (buf.begin(), buf.end(), 0.0f);
+        for (int b = 0; b < 24; ++b) e.process (buf.data(), buf.data(), block, f); // flush latency
+        const float rmsBefore = rms (buf.data(), block);
+
+        bool finite = true; float rmsAfter = 0.0f;
+        for (int b = 0; b < 200; ++b)
+        {
+            std::fill (buf.begin(), buf.end(), 0.0f);
+            e.process (buf.data(), buf.data(), block, f);
+            if (! finiteAll (buf.data(), block)) { finite = false; break; }
+            rmsAfter = rms (buf.data(), block);
+        }
+        bool ok = finite && rmsBefore > 1.0e-3f && rmsAfter > rmsBefore * 0.9f;
+        printf ("[%s] freeze holds level despite loss=1.0: before=%.4f after200=%.4f\n",
+                ok ? "PASS" : "FAIL", rmsBefore, rmsAfter);
+        fails += ok ? 0 : 1;
+    }
+    {
+        SpectralEngine e1; e1.prepare (sr, 13); e1.setOrder (12); e1.reset();
+        SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+        SpectralEngine::Params p1; p1.feed = 0.6f; p1.loss = 0.2f; p1.freeze = false;
+        SpectralEngine::Params p2 = p1; // freeze left at its default (false)
+        juce::Random rng (321);
+        std::vector<float> in1 (block), in2 (block), out1 (block), out2 (block);
+        float maxErr = 0.0f;
+        for (int b = 0; b < 40; ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const float s = rng.nextFloat() * 1.0f - 0.5f;
+                in1[(size_t) i] = s; in2[(size_t) i] = s;
+            }
+            e1.process (in1.data(), out1.data(), block, p1);
+            e2.process (in2.data(), out2.data(), block, p2);
+            for (int i = 0; i < block; ++i)
+                maxErr = juce::jmax (maxErr, std::abs (out1[(size_t) i] - out2[(size_t) i]));
+        }
+        bool ok = maxErr == 0.0f;
+        printf ("[%s] freeze=false is bit-exact vs pre-B2 behaviour: maxErr=%.2e\n",
+                ok ? "PASS" : "FAIL", maxErr);
+        fails += ok ? 0 : 1;
+    }
+
     // 5) brush edit: boosting a held band raises its level, cutting lowers it
     {
         eng.setOrder (12);

@@ -70,6 +70,10 @@ Let `hop = hopSize`, `sr = sampleRate`.
   does **not** touch the filter compensation invariant below.
 - **Attack was removed.** `Xs[k] = X[k]` unsmoothed each frame; lowering Feed gives the
   same slowed-onset effect the old attack knob did.
+- **Freeze** (`freeze`, agent-wiki/plan-roadmap.md B2) forces `feed=0`, `trackW=0` (no
+  frequency tracking) and `decayL=1` (loss bypassed) for the live input path only — it does
+  not gate the aux/revFeed injection, brush, shaper or harmonize, which keep running under
+  freeze exactly as without it.
 
 ## The spectral shaper
 Replaces the old Filter + Compress with one per-bin signed curve. Math lives in

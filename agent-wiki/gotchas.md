@@ -218,8 +218,11 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   dry against the engine's latent output combs. If Dry/Wet sounds "flangey", check the
   delay length matches `engine.getLatency()`, don't remove the delay.
 - **Param creation order is the Push/Maschine page grouping** (8 per page). Don't
-  alphabetize or "tidy" `createLayout()` — order is meaningful. Page 2 (shaper) has 7 +
-  `revMix` spilling into slot 8; accepted, not a bug.
+  alphabetize or "tidy" `createLayout()` — order is meaningful. Page 2 (shaper) has its own
+  7 + `harmonize`'s master amount spilling into slot 8 (not `revMix` — see
+  [parameters.md](parameters.md) for the current 4-page table); accepted, not a bug. As of
+  agent-wiki/plan-roadmap.md B0/B2 there's a 4th, partial page too (`revFeed`, `phaseNoise`
+  — interim, final slots land with B3/B4/B5); same rule applies to it.
 - **Tabs are view-only.** All modules process regardless of which tab is visible. Display
   overlays (shaper curve, harmonize influence) are **always shown** when their module is
   active, independent of the tab — don't gate them by tab again, it hid armed modifiers

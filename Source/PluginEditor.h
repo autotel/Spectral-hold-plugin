@@ -36,6 +36,8 @@ private:
 
     // persistent row (always visible)
     Knob feed, loss, ewLocation, dryWet, output, limThreshold, limRelease;
+    juce::TextButton freezeButton { "Freeze" }; // agent-wiki/plan-roadmap.md B2: stop time
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAttach;
 
     // tabbed rows (one visible at a time)
     Knob shapeAmt, shapeMode, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel;

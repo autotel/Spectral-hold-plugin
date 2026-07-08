@@ -89,6 +89,7 @@ private:
     std::atomic<float>* pDryWet = nullptr;
     std::atomic<float>* pOutput = nullptr;
     std::atomic<float>* pPhaseNoise = nullptr;
+    std::atomic<float>* pFreeze = nullptr; // agent-wiki/plan-roadmap.md B2
     std::atomic<float>* pLimThreshold = nullptr;
     std::atomic<float>* pLimRelease   = nullptr;
     std::atomic<float>* pHarmonize = nullptr;

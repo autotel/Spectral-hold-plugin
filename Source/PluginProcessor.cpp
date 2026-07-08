@@ -35,6 +35,7 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pDryWet = apvts.getRawParameterValue ("dryWet");
     pOutput = apvts.getRawParameterValue ("output");
     pPhaseNoise = apvts.getRawParameterValue ("phaseNoise");
+    pFreeze     = apvts.getRawParameterValue ("freeze");
     pLimThreshold = apvts.getRawParameterValue ("limThreshold");
     pLimRelease   = apvts.getRawParameterValue ("limRelease");
 
@@ -65,16 +66,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     AudioProcessorValueTreeState::ParameterLayout layout;
 
     // Creation order = host page order (Push/Maschine bank 8 consecutive params per
-    // page). Exactly three pages of 8 (see agent-wiki/plan-fixes.md §9):
+    // page). Regrouped by agent-wiki/plan-roadmap.md B0/B2 (was plan-fixes.md §9's three
+    // pages of 8; freeze now closes P1, phaseNoise moved to the interim P4):
     //   P1 "Hold":   feed, loss, ewLocation, dryWet, output, limThreshold, limRelease,
-    //                phaseNoise
+    //                freeze
     //   P2 "Shaper": shapeAmt, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel,
     //                shapeMode, harmonize   (harmonize closing the sculpt page is the
     //                accepted compromise to hit 8/8/8)
     //   P3 "Space":  harmWidth, harmonic, revMix, revDecay, revDamp, revSize,
     //                revPredelay, revMetal
-    //   P4 (partial): revFeed -- reverb->hold feedback (see agent-wiki/plan-roadmap.md
-    //                Part A); interim slot 1/8, accepted until Part B's page regroup.
+    //   P4 "Perform" (partial, interim): revFeed, phaseNoise -- final slots land once B3
+    //                (transpose), B4 (continuous phaseNoiseAmt) and B5 (spread) do.
     // Parameter IDs are unchanged by this grouping -- state restores by ID, not index.
 
     // --- P1: Hold ---
@@ -108,8 +110,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "limRelease", 1 }, "Limiter Release",
         NormalisableRange<float> (50.0f, 5000.0f, 0.0f, 0.4f), 1200.0f)); // ms, skewed
 
+    // Freeze (agent-wiki/plan-roadmap.md B2): stop time -- closes P1's 8-slot page. Takes
+    // phaseNoise's old slot; phaseNoise moves to the interim P4 group below (it becomes a
+    // continuous Phase Noise amount there once B4 lands).
     layout.add (std::make_unique<AudioParameterBool> (
-        ParameterID { "phaseNoise", 1 }, "Phase Noise", false));
+        ParameterID { "freeze", 1 }, "Freeze", false));
 
     // --- P2: Shaper (replaces the old Filter + Compress; see agent-wiki/dsp-design.md) ---
     layout.add (std::make_unique<AudioParameterFloat> (
@@ -181,12 +186,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "revMetal", 1 }, "Reverb Metal",
         NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // less diffusion, no LFO smear
 
-    // Reverb -> hold feedback (agent-wiki/plan-roadmap.md Part A). A second,
-    // Feed-independent input path into the engine -- see SpectralEngine::Params::revFeed.
-    // Appended last: interim page-4 slot 1 on main; Part B's page regroup moves it.
+    // --- P4 "Perform" (partial, interim): revFeed (Part A) + phaseNoise (moved out of P1
+    // by the B2 regroup above). Both get their final slots once B3/B4/B5 land transpose,
+    // spread and continuous phaseNoiseAmt (agent-wiki/plan-roadmap.md B0).
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revFeed", 1 }, "Reverb Feed",
         NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "phaseNoise", 1 }, "Phase Noise", false));
 
     return layout;
 }
@@ -258,6 +266,7 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     p.loss       = pLoss->load();
     p.ewLocation = pEwLocation->load();
     p.phaseNoise = pPhaseNoise->load() > 0.5f;
+    p.freeze     = pFreeze->load() > 0.5f;
     p.harmonize  = pHarmonize->load();
     p.harmWidth  = pHarmWidth->load();
     p.harmonic   = pHarmonic->load();

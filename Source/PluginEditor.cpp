@@ -15,6 +15,11 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (limThreshold, "limThreshold", "Thresh");
     setupKnob (limRelease,   "limRelease",   "Release");
 
+    freezeButton.setClickingTogglesState (true);
+    addAndMakeVisible (freezeButton);
+    freezeAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        proc.apvts, "freeze", freezeButton);
+
     // tabbed rows
     setupKnob (shapeAmt,   "shapeAmt",   "Amount");
     setupKnob (shapeMode,  "shapeMode",  "Feed");
@@ -108,6 +113,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setInfo (output.slider,     "Output level, before the safety limiter.");
     setInfo (limThreshold.slider, "Output ceiling. The slow limiter pulls the level down to this.");
     setInfo (limRelease.slider,   "How fast the limiter recovers after pulling down.");
+    setInfo (freezeButton,        "Stop time: no input enters, nothing decays. Edits (brush, shaper, harmonize, reverb feed) still work.");
     setInfo (shapeAmt.slider,   "Shaper depth: scales the whole curve.");
     setInfo (shapeMode.slider,  "How much the shaping is etched into the held sound vs only heard.");
     setInfo (shape.slider,      "Morphs the curve: Level, Sigmoid, Spikes, Harmonics, Sine.");
@@ -227,8 +233,12 @@ void SpectralHoldEditor::resized()
 
     auto controls = r.reduced (8, 4);
 
-    // persistent row: the performance knobs, always visible
+    // persistent row: the performance knobs + Freeze, always visible (8 slots, matching
+    // P1's host page -- see agent-wiki/plan-roadmap.md B0/B2)
     auto row1 = controls.removeFromTop ((controls.getHeight() - 28) / 2);
+    auto freezeCell = row1.removeFromRight (row1.getWidth() / 8);
+    freezeButton.setBounds (freezeCell.withSizeKeepingCentre (
+        juce::jmax (40, freezeCell.getWidth() - 8), 28));
     Knob* row1Knobs[] = { &feed, &loss, &ewLocation, &dryWet, &output, &limThreshold, &limRelease };
     layoutRow (row1, row1Knobs, 7);
 
