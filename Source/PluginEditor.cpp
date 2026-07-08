@@ -34,6 +34,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (revSize,     "revSize",     "Size");
     setupKnob (revPredelay, "revPredelay", "Predelay");
     setupKnob (revMetal,    "revMetal",    "Metal");
+    setupKnob (revFeed,     "revFeed",     "Feed");
 
     // tab strip (radio-style toggles switching the visible knob row)
     for (auto* t : { &shaperTab, &harmonizeTab, &reverbTab })
@@ -119,6 +120,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setInfo (revSize.slider,    "Reverb room size. Moving it live bends the tail's pitch.");
     setInfo (revPredelay.slider,"Gap before the reverb starts.");
     setInfo (revMetal.slider,   "Trades diffusion for a harder, more metallic reflection character.");
+    setInfo (revFeed.slider,    "Feeds the reverb tail back into the held spectrum. Independent of the main Feed.");
     setInfo (noiseButton,       "Adds shimmer by jittering each tone's phase. Never detunes permanently.");
     setInfo (sizeBox,           "Spectral resolution vs time response. Changing it resets the held sound.");
     setInfo (liveButton,        "Report zero latency to the host (for live playing; disables delay compensation).");
@@ -172,7 +174,7 @@ void SpectralHoldEditor::setActiveTab (int tabIndex)
 
     Knob* shaperKnobs[]    = { &shapeAmt, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel, &shapeMode };
     Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
-    Knob* reverbKnobs[]    = { &revMix, &revDecay, &revDamp, &revSize, &revPredelay, &revMetal };
+    Knob* reverbKnobs[]    = { &revMix, &revDecay, &revDamp, &revSize, &revPredelay, &revMetal, &revFeed };
 
     auto show = [] (Knob* const* ks, int n, bool visible)
     {
@@ -184,7 +186,7 @@ void SpectralHoldEditor::setActiveTab (int tabIndex)
     };
     show (shaperKnobs,    7, tabIndex == 0);
     show (harmonizeKnobs, 3, tabIndex == 1);
-    show (reverbKnobs,    6, tabIndex == 2);
+    show (reverbKnobs,    7, tabIndex == 2);
 
     shaperTab.setToggleState    (tabIndex == 0, juce::dontSendNotification);
     harmonizeTab.setToggleState (tabIndex == 1, juce::dontSendNotification);
@@ -235,10 +237,10 @@ void SpectralHoldEditor::resized()
     // tabbed row: all three share the same area; visibility picks the active one
     Knob* shaperKnobs[]    = { &shapeAmt, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel, &shapeMode };
     Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
-    Knob* reverbKnobs[]    = { &revMix, &revDecay, &revDamp, &revSize, &revPredelay, &revMetal };
+    Knob* reverbKnobs[]    = { &revMix, &revDecay, &revDamp, &revSize, &revPredelay, &revMetal, &revFeed };
     layoutRow (controls, shaperKnobs,    7);
     layoutRow (controls, harmonizeKnobs, 3);
-    layoutRow (controls, reverbKnobs,    6);
+    layoutRow (controls, reverbKnobs,    7);
 
     sizeBox.setBounds (bottom.removeFromRight (80));
     sizeLabel.setBounds (bottom.removeFromRight (50));

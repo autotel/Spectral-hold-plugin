@@ -177,6 +177,38 @@ attack stays fixed at `kLimAttMs = 5 ms` (not exposed — always fast enough to 
   processor, not the engine, so the test replicates the 5-line envelope math rather than
   linking `PluginProcessor` into the test target).
 
+## Aux input path (reverb feed, `revFeed`, agent-wiki/plan-roadmap.md Part A)
+A second, **Feed-independent** injection path, so the output reverb's wet tail can feed
+back into the held spectrum even when `feed` is low/zero (the normal frozen-hold case —
+see gotchas.md for why the *old* `revFeed` never worked). Replaces the removed feature.
+- `SpectralEngine::process` takes an optional `aux` pointer (nullptr = silent); a 4-arg
+  overload forwards `aux=nullptr` for callers (tests, anything) that don't use it.
+- `auxRing` shares `inWrite` with `inRing`, so the aux frame is sample-aligned with the
+  analysis frame by construction — no extra bookkeeping needed.
+- Aux gets its **own forward FFT** (`auxFftData`), computed only when `revFeed > 1e-4` so
+  the default costs nothing.
+- Injection: `injAux = revFeed · injScale · Xaux[k] · comp[k]` — reuses the same
+  `injScale`/`comp` as the live path, so it responds to Loss and the momentary-cut
+  compensation the same way.
+- **Feedback-loop safety:** live input's `inj` is added uncapped (as always); `injAux` is
+  added through the *same* soft ceiling the permanent shaper's boost uses
+  (`g = max(0, 1 − |S|/permCeil)`, `permCeil = kPermCeilNorm·0.5·fftSize`) — because unlike
+  live input, aux closes a **real loop** (engine → reverb → engine), and an uncapped
+  additive loop at `loss=0` diverges. The cap holds each bin's normalised magnitude
+  (`|S|·2/fftSize`) near `kPermCeilNorm ≈ 1.0`; it does **not** bound the *time-domain*
+  sum across ~2000 bins, which can legitimately be large once many bins sit near their own
+  cap (coherent sum) — don't mistake a big output sample for a bug, check per-bin magnitude
+  instead (see the `aux feedback loop stability` test).
+- **Frequency tracking is input-only.** Aux energy is not fed into `prevPhase`/the
+  instantaneous-frequency measurement — it inherits the receiving layer's `omega`. The
+  reverb wet is a smeared copy of the held tones at roughly the same bins, so this is
+  correct-enough and keeps the tracking logic simple.
+- In `PluginProcessor`: `revFeedBuf` holds the **previous block's** reverb wet mono
+  (`0.5·(wetL+wetR)`), fed to every engine's `aux` this block — an inherent one-block
+  feedback delay. The reverb now runs whenever `revMix > 0 || revFeed > 0` (revFeed needs
+  the wet tail even at `revMix = 0`, i.e. reverb as a silent hold-exciter); hard bypass
+  (skip `reverb.process` entirely, bit-exact dry) requires **both** at 0.
+
 ## East–West location field (continuous tone locations, plan v2 + location layers)
 Every bin/tone carries a **continuous location** `binLoc[k] ∈ [0,1]` alongside `S`/`omega`.
 The `ewLocation` knob (0 = East = legacy default, 1 = West) is a **listener/recorder

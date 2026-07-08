@@ -128,14 +128,18 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   new proxy metric.
 - Reverb lives in `PluginProcessor` (cross-channel, mono-summed), not per-engine — same
   category as the limiter.
-- **`revFeed` (reverb→hold feedback) was removed — don't re-add it via the input path.**
-  It shipped, was stable, and was inaudible anyway: the re-injected wet entered the engine
-  through the same input path as live audio, whose injection strength is multiplied by
-  the **Feed** knob inside `SpectralEngine`. With Feed low/zero (the normal frozen-hold
-  case this knob was meant for), the injected wet was scaled to near-nothing before it
-  could do anything audible. A real version of this feature needs a second, Feed-independent
-  input path into the engine — that's an engine-level change, not a processor tweak; don't
-  attempt it as a quick revival of the old `revFeedG` block.
+- **`revFeed` exists again, done right** (agent-wiki/plan-roadmap.md Part A). The *original*
+  version was removed because it was inaudible: the re-injected wet entered the engine
+  through the same input path as live audio, scaled by the **Feed** knob — with Feed
+  low/zero (the normal frozen-hold case the knob was meant for), the injected wet vanished
+  before it could do anything. The current `revFeed` fixes this with a genuinely second,
+  **Feed-independent** input path (`SpectralEngine::process`'s `aux` argument; see
+  dsp-design.md "Aux input path"). **Don't revive the old input-path shortcut** (feeding
+  wet through the normal `in` pointer, scaled by Feed) — that's the exact bug this fixes.
+  The new path also needed a feedback-loop safety ceiling that the old one never needed
+  (it never fed back anything audible to begin with) — see the soft-ceiling note in
+  dsp-design.md. Reverb now runs whenever `revMix > 0 || revFeed > 0` (not just
+  `revMix > 0`); hard bypass requires both at 0.
 
 ## East–West location field (exp/eastwest, plan v2 — continuous locations)
 - **v1 (16 slots + normalised blend) was ripped out on purpose** — it produced audible

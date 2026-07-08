@@ -101,9 +101,12 @@ private:
     std::atomic<float>* pRevDamp     = nullptr;
     std::atomic<float>* pRevPredelay = nullptr;
     std::atomic<float>* pRevMetal    = nullptr;
+    std::atomic<float>* pRevFeed     = nullptr; // reverb -> hold feedback (plan-roadmap.md Part A)
     PlateReverb reverb;
     std::vector<float> revMono, revWetL, revWetR;
-    float prevRevMix = 0.0f; // to detect the 1->0 transition and reset the tail
+    std::vector<float> revFeedBuf; // previous block's wet mono, fed back into the engines
+    float prevRevMix  = 0.0f; // to detect the 1->0 transition and reset the tail
+    float prevRevFeed = 0.0f; // to detect the 1->0 transition on the feedback path
 
     // spectral shaper (replaces the old filter + compress)
     std::atomic<float>* pShapeAmt   = nullptr;

@@ -40,7 +40,7 @@ private:
     // tabbed rows (one visible at a time)
     Knob shapeAmt, shapeMode, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel;
     Knob harmonize, harmWidth, harmonic;
-    Knob revMix, revDecay, revDamp, revSize, revPredelay, revMetal;
+    Knob revMix, revDecay, revDamp, revSize, revPredelay, revMetal, revFeed;
 
     juce::TextButton shaperTab { "Shaper" }, harmonizeTab { "Harmonize" }, reverbTab { "Reverb" };
     int activeTab = 0;

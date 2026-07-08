@@ -42,6 +42,10 @@ public:
         // toward the knob. Parked at 0 (the default) everything behaves exactly like the
         // single-buffer engine.
         float ewLocation = 0.0f;    // 0 = East (default/legacy), 1 = West
+
+        // Aux (reverb-feedback) input: a second, Feed-independent injection path. See
+        // agent-wiki/plan-roadmap.md Part A / dsp-design.md "Aux input path".
+        float revFeed = 0.0f;       // 0..1 aux injection amount
     };
 
     void prepare (double sampleRate, int maxFftOrder);
@@ -51,7 +55,13 @@ public:
     void reset();
 
     // Process one channel in place. Latency == fftSize (report it to the host).
-    void process (const float* in, float* out, int numSamples, const Params& p);
+    // aux is a second, Feed-independent input (e.g. reverb wet tap) mixed in via
+    // Params::revFeed; pass nullptr for silence (equivalent to the 4-arg overload).
+    void process (const float* in, const float* aux, float* out, int numSamples, const Params& p);
+    void process (const float* in, float* out, int numSamples, const Params& p)
+    {
+        process (in, nullptr, out, numSamples, p);
+    }
 
     int    getFftSize() const    { return fftSize; }
     int    getLatency() const    { return fftSize; }
@@ -94,6 +104,11 @@ private:
     // sliding I/O rings, length fftSize
     std::vector<float> inRing, outRing;
     int inWrite = 0, outRead = 0, hopCount = 0;
+
+    // Aux (reverb-feedback) input ring: shares inWrite so the aux frame is sample-aligned
+    // with the analysis frame by construction. See Params::revFeed.
+    std::vector<float> auxRing;
+    std::vector<float> auxFftData; // scratch for the aux forward transform (length 2*maxFftSize)
 
     // Location layers (agent-wiki/plan-loclayers.md): kNumLayers parallel held states so
     // the same frequency can coexist at multiple E<->W locations instead of one recording

@@ -38,6 +38,10 @@ held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, 
   location knob** (`exp/eastwest`): the held sound becomes a 2-D `[frequency, location]`
   field of 16 slots blended by a presence-weighted location gain. DSP model, engine
   restructure, tests.
+- [plan-roadmap.md](plan-roadmap.md) — plan (NOT yet implemented) for the roadmap batch:
+  **revFeed done right** (Feed-independent aux path, lands on `main`) and, on `exp/roadmap`,
+  hold serialization, freeze, transpose+MIDI, continuous phase noise, stereo spread, undo,
+  stereo display + E–W location strip, resizable editor, presets, CI+CLAP.
 - [plan-loclayers.md](plan-loclayers.md) — plan (implemented) for **location layers**
   (`exp/loclayers`): K=4 parallel held states so the same frequency can coexist at
   multiple E–W locations — fixes the "re-recording a pitch elsewhere steals/drags it"

@@ -56,6 +56,7 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pRevDamp     = apvts.getRawParameterValue ("revDamp");
     pRevPredelay = apvts.getRawParameterValue ("revPredelay");
     pRevMetal    = apvts.getRawParameterValue ("revMetal");
+    pRevFeed     = apvts.getRawParameterValue ("revFeed");
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::createLayout()
@@ -72,6 +73,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     //                accepted compromise to hit 8/8/8)
     //   P3 "Space":  harmWidth, harmonic, revMix, revDecay, revDamp, revSize,
     //                revPredelay, revMetal
+    //   P4 (partial): revFeed -- reverb->hold feedback (see agent-wiki/plan-roadmap.md
+    //                Part A); interim slot 1/8, accepted until Part B's page regroup.
     // Parameter IDs are unchanged by this grouping -- state restores by ID, not index.
 
     // --- P1: Hold ---
@@ -178,6 +181,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "revMetal", 1 }, "Reverb Metal",
         NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // less diffusion, no LFO smear
 
+    // Reverb -> hold feedback (agent-wiki/plan-roadmap.md Part A). A second,
+    // Feed-independent input path into the engine -- see SpectralEngine::Params::revFeed.
+    // Appended last: interim page-4 slot 1 on main; Part B's page regroup moves it.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "revFeed", 1 }, "Reverb Feed",
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
     return layout;
 }
 
@@ -201,7 +211,9 @@ void SpectralHoldProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     revMono.assign ((size_t) samplesPerBlock, 0.0f);
     revWetL.assign ((size_t) samplesPerBlock, 0.0f);
     revWetR.assign ((size_t) samplesPerBlock, 0.0f);
-    prevRevMix = pRevMix->load();
+    revFeedBuf.assign ((size_t) samplesPerBlock, 0.0f);
+    prevRevMix  = pRevMix->load();
+    prevRevFeed = pRevFeed->load();
 
     for (auto& d : dryDelay)
         d.prepare (1 << kMaxFftOrder, samplesPerBlock);
@@ -257,6 +269,7 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     p.shapeWidth = pShapeWidth->load();
     p.shapeCount = pShapeCount->load();
     p.shapeLevel = pShapeLevel->load();
+    p.revFeed    = pRevFeed->load();
 
     // --- global dry/wet: capture and mix the latency-aligned dry input. The rings
     // are always fed (cheap) so turning the knob down never reads stale audio, but at
@@ -265,12 +278,19 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     if ((int) dryScratch.size() < numSamples)
         dryScratch.resize ((size_t) numSamples);
 
+    // Aux (reverb-feedback) tap: revFeedBuf holds the PREVIOUS block's reverb wet mono
+    // (filled at the end of this function). One-block feedback delay, inherent and fine.
+    // Grow-and-zero on a host block-size increase so stale/garbage samples are never read.
+    if ((int) revFeedBuf.size() < numSamples)
+        revFeedBuf.resize ((size_t) numSamples, 0.0f);
+    const float* auxTap = (p.revFeed > 0.0f) ? revFeedBuf.data() : nullptr;
+
     for (int ch = 0; ch < juce::jmin (numCh, (int) engines.size()); ++ch)
     {
         auto* d = buffer.getWritePointer (ch);
         auto& eng = engines[(size_t) ch];
         dryDelay[(size_t) ch].process (d, dryScratch.data(), numSamples, eng.getLatency());
-        eng.process (d, d, numSamples, p); // in place: capture dry BEFORE this
+        eng.process (d, auxTap, d, numSamples, p); // in place: capture dry BEFORE this
         if (dryWet < 1.0f)
         {
             const float wetG = dryWet, dryG = 1.0f - dryWet;
@@ -284,14 +304,18 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     if (outGain != 1.0f)
         buffer.applyGain (outGain);
 
-    // --- output reverb (post-fader, pre-limiter). Hard-bypassed at mix=0 so old
-    // sessions (and mix left at its default) stay bit-exact dry; the tail is reset
-    // on the 1->0 transition so no stale tail plays when mix comes back up.
-    const float revMix = pRevMix->load();
-    if (revMix <= 0.0f)
+    // --- output reverb (post-fader, pre-limiter). Runs whenever the audible mix OR the
+    // feedback path is in use -- revFeed needs the wet tail even at revMix=0 ("reverb as
+    // silent hold-exciter"). Hard-bypassed only when BOTH are 0, so old sessions (and the
+    // defaults) stay bit-exact dry; the tail resets when both fall to 0 so no stale tail
+    // plays -- or leaks into the feedback tap -- when either comes back up.
+    const float revMix  = pRevMix->load();
+    const float revFeed = p.revFeed;
+    if (revMix <= 0.0f && revFeed <= 0.0f)
     {
-        if (prevRevMix > 0.0f)
+        if (prevRevMix > 0.0f || prevRevFeed > 0.0f)
             reverb.reset();
+        std::fill (revFeedBuf.begin(), revFeedBuf.begin() + numSamples, 0.0f);
     }
     else
     {
@@ -314,17 +338,25 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                            pRevPredelay->load() * 0.001f, pRevMetal->load());
         reverb.process (revMono.data(), revWetL.data(), revWetR.data(), numSamples);
 
-        const float dryGain = std::cos (revMix * juce::MathConstants<float>::halfPi);
-        const float wetGain = std::sin (revMix * juce::MathConstants<float>::halfPi);
-        for (int ch = 0; ch < numCh; ++ch)
+        // feedback tap for NEXT block's aux input (see revFeedBuf declaration)
+        for (int n = 0; n < numSamples; ++n)
+            revFeedBuf[(size_t) n] = 0.5f * (revWetL[(size_t) n] + revWetR[(size_t) n]);
+
+        if (revMix > 0.0f)
         {
-            auto* d = buffer.getWritePointer (ch);
-            const float* wet = (ch % 2 == 0) ? revWetL.data() : revWetR.data();
-            for (int n = 0; n < numSamples; ++n)
-                d[n] = d[n] * dryGain + wet[n] * wetGain;
+            const float dryGain = std::cos (revMix * juce::MathConstants<float>::halfPi);
+            const float wetGain = std::sin (revMix * juce::MathConstants<float>::halfPi);
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                auto* d = buffer.getWritePointer (ch);
+                const float* wet = (ch % 2 == 0) ? revWetL.data() : revWetR.data();
+                for (int n = 0; n < numSamples; ++n)
+                    d[n] = d[n] * dryGain + wet[n] * wetGain;
+            }
         }
     }
-    prevRevMix = revMix;
+    prevRevMix  = revMix;
+    prevRevFeed = revFeed;
 
     // --- output limiter: lower gain only when peak would exceed the threshold.
     // Release recomputed per block from the param (attack stays fixed, kLimAttMs).

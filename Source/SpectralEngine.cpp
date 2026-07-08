@@ -75,6 +75,8 @@ void SpectralEngine::prepare (double sr, int maxFftOrder)
     inRing.assign  ((size_t) maxFftSize, 0.0f);
     outRing.assign ((size_t) maxFftSize, 0.0f);
     window.assign  ((size_t) maxFftSize, 0.0f);
+    auxRing.assign    ((size_t) maxFftSize, 0.0f);
+    auxFftData.assign ((size_t) (2 * maxFftSize), 0.0f);
 
     maxBins = maxFftSize / 2 + 1;
     const size_t layeredSize = (size_t) kNumLayers * (size_t) maxBins;
@@ -139,6 +141,7 @@ void SpectralEngine::reset()
 {
     std::fill (inRing.begin(),  inRing.end(),  0.0f);
     std::fill (outRing.begin(), outRing.end(), 0.0f);
+    std::fill (auxRing.begin(), auxRing.end(), 0.0f);
     std::fill (S.begin(),  S.end(),  std::complex<float> {});
     std::fill (Xs.begin(), Xs.end(), std::complex<float> {});
     std::fill (prevPhase.begin(), prevPhase.end(), 0.0f);
@@ -149,20 +152,22 @@ void SpectralEngine::reset()
     inWrite = outRead = hopCount = 0;
 }
 
-void SpectralEngine::process (const float* in, float* out, int numSamples, const Params& p)
+void SpectralEngine::process (const float* in, const float* aux, float* out, int numSamples, const Params& p)
 {
     for (int n = 0; n < numSamples; ++n)
     {
-        // latch input first: in and out may alias (in-place processing).
+        // latch input first: in/aux and out may alias (in-place processing).
         const float x = in[n];
+        const float a = (aux != nullptr) ? aux[n] : 0.0f;
 
         // pop output (latency = fftSize)
         out[n] = outRing[(size_t) outRead] * winNorm;
         outRing[(size_t) outRead] = 0.0f;
         outRead = (outRead + 1) % fftSize;
 
-        // push input
+        // push input (aux shares inWrite -- sample-aligned with the analysis frame)
         inRing[(size_t) inWrite] = x;
+        auxRing[(size_t) inWrite] = a;
         inWrite = (inWrite + 1) % fftSize;
 
         if (++hopCount >= hopSize)
@@ -183,6 +188,17 @@ void SpectralEngine::processFrame (const Params& p)
         fftData[(size_t) i] = s * window[(size_t) i];
     }
     fft->performRealOnlyForwardTransform (fftData.data());
+
+    // Aux (reverb-feedback) analysis: a second, Feed-independent input path (see
+    // agent-wiki/plan-roadmap.md Part A). Only computed when revFeed is in use so the
+    // default costs nothing.
+    const bool auxActive = p.revFeed > 1.0e-4f;
+    if (auxActive)
+    {
+        for (int i = 0; i < fftSize; ++i)
+            auxFftData[(size_t) i] = auxRing[(size_t) ((inWrite + i) % fftSize)] * window[(size_t) i];
+        fft->performRealOnlyForwardTransform (auxFftData.data());
+    }
 
     // E<->W (agent-wiki/plan-loclayers.md): the knob is a listener/recorder position on a
     // continuous line. Each layer/bin carries its own loc[k]; attenuation att(|L-loc[k]|)
@@ -275,7 +291,16 @@ void SpectralEngine::processFrame (const Params& p)
 
         std::complex<float> x { fftData[(size_t) (2 * k)], fftData[(size_t) (2 * k + 1)] };
         const std::complex<float> inj = feed * x * comp;
-        const float aInj = std::abs (inj);
+
+        // Aux (reverb-feedback) injection: Feed-independent, uses the same injScale/comp
+        // as the live path. See agent-wiki/plan-roadmap.md Part A / dsp-design.md.
+        std::complex<float> injAux {};
+        if (auxActive)
+        {
+            const std::complex<float> xa { auxFftData[(size_t) (2 * k)], auxFftData[(size_t) (2 * k + 1)] };
+            injAux = p.revFeed * injScale * xa * comp;
+        }
+        const float aInj = std::abs (inj + injAux);
 
         // --- instantaneous-frequency tracking: measure the true per-hop phase advance of
         // the input (shared across layers -- a property of the analysis). Held at *that*
@@ -372,6 +397,16 @@ void SpectralEngine::processFrame (const Params& p)
                     binLoc[idx] = claimed ? ewL
                                            : (aHeld * locL + aInj * ewL) / (aHeld + aInj);
                     sk += inj;
+                    if (auxActive)
+                    {
+                        // feedback-loop safety: unlike live input, aux closes a real loop
+                        // (engine -> reverb -> engine); soft-ceiling it the same way the
+                        // permanent shaper's boost self-limits, so gain>1 loops saturate
+                        // instead of blowing up. Live input stays uncapped as before.
+                        const float permCeil = kPermCeilNorm * 0.5f * (float) fftSize;
+                        const float g = juce::jmax (0.0f, 1.0f - std::abs (sk) / permCeil);
+                        sk += injAux * g;
+                    }
                 }
             }
 

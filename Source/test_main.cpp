@@ -971,6 +971,125 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // ---- aux (reverb-feedback) input path (agent-wiki/plan-roadmap.md Part A) ----
+    // A second, Feed-independent injection path into the engine, so the reverb tail can
+    // feed the held spectrum even when Feed is 0 (the normal frozen-hold case).
+
+    // aux1) aux injects at feed=0: driving ONLY the aux input (in = silence) with revFeed>0
+    // should build up held energy, same as the normal input path does with Feed>0.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        SpectralEngine::Params a;
+        a.feed = 0.0f; a.loss = 0.2f; a.revFeed = 0.6f;
+        std::vector<float> in (block, 0.0f), aux (block), out (block);
+        double phase = 0.0;
+        const double w = 2.0 * M_PI * 440.0 / sr;
+        bool finite = true;
+        for (int blk = 0; blk < 50; ++blk)
+        {
+            for (int i = 0; i < block; ++i) { aux[(size_t) i] = 0.5f * (float) std::sin (phase); phase += w; }
+            e.process (in.data(), aux.data(), out.data(), block, a);
+            if (! finiteAll (out.data(), block)) { finite = false; break; }
+        }
+        // measure the held tail after the aux drive stops (in and aux both silent)
+        std::fill (aux.begin(), aux.end(), 0.0f);
+        float tailRms = 0.0f;
+        for (int blk = 0; blk < 10; ++blk)
+        {
+            e.process (in.data(), aux.data(), out.data(), block, a);
+            tailRms = juce::jmax (tailRms, rms (out.data(), block));
+        }
+        bool ok = finite && tailRms > 1.0e-3f;
+        printf ("[%s] aux injects at feed=0: finite=%d tailRms=%.4f\n",
+                ok ? "PASS" : "FAIL", (int) finite, tailRms);
+        fails += ok ? 0 : 1;
+    }
+
+    // aux2) feedback stability: close the loop (engine output fed back as its own aux
+    // input) at revFeed=1, loss=0. The soft ceiling caps each BIN's held magnitude
+    // (normalised, |S|*2/fftSize) toward kPermCeilNorm=1.0 -- it does NOT bound the
+    // time-domain sum across ~2000 bins, which legitimately keeps climbing for a very
+    // long time as leakage recruits more bins near their own cap (many-bin coherent sum).
+    // So check the thing the ceiling actually promises: per-bin magnitude stays capped,
+    // and every sample stays finite -- not a small absolute time-domain bound.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        SpectralEngine::Params a;
+        a.feed = 1.0f; a.loss = 0.0f; a.revFeed = 1.0f;
+        std::vector<float> in (block), aux (block, 0.0f), out (block);
+        double phase = 0.0;
+        const double w = 2.0 * M_PI * 440.0 / sr;
+        for (int i = 0; i < block; ++i) { in[(size_t) i] = 0.5f * (float) std::sin (phase); phase += w; }
+        bool finite = true;
+        const int total = 20 + 800;
+        for (int blk = 0; blk < total; ++blk)
+        {
+            e.process (in.data(), aux.data(), out.data(), block, a);
+            if (! finiteAll (out.data(), block)) { finite = false; break; }
+            if (blk == 19) std::fill (in.begin(), in.end(), 0.0f); // stop live input after warmup
+            aux = out; // next block's aux = this block's own output (closed loop)
+        }
+        std::vector<float> mag, ph;
+        int n = 0;
+        for (int t = 0; t < 8 && n == 0 && finite; ++t)
+        {
+            e.process (in.data(), aux.data(), out.data(), block, a);
+            if (! finiteAll (out.data(), block)) { finite = false; break; }
+            aux = out;
+            n = e.copyDisplay (mag, ph);
+        }
+        float maxBinMag = 0.0f;
+        for (int k = 0; k < n; ++k) maxBinMag = juce::jmax (maxBinMag, mag[(size_t) k]);
+        bool ok = finite && maxBinMag < 1.3f; // kPermCeilNorm=1.0 + headroom for overshoot
+        printf ("[%s] aux feedback loop stability: finite=%d maxBinMag=%.3f (ceiling~1.0)\n",
+                ok ? "PASS" : "FAIL", (int) finite, maxBinMag);
+        fails += ok ? 0 : 1;
+    }
+
+    // aux3) default (revFeed=0) is bit-exact regardless of what's on the aux input, and
+    // matches the 4-arg (aux=nullptr) overload.
+    {
+        SpectralEngine e1; e1.prepare (sr, 13); e1.setOrder (12); e1.reset();
+        SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+        SpectralEngine::Params a; a.feed = 1.0f; a.loss = 0.2f; a.revFeed = 0.0f;
+        juce::Random rng (77);
+        std::vector<float> in (block), aux (block), out1 (block), out2 (block);
+        float maxErr = 0.0f;
+        for (int blk = 0; blk < 40; ++blk)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                in[(size_t) i]  = rng.nextFloat() * 1.2f - 0.6f;
+                aux[(size_t) i] = rng.nextFloat() * 1.2f - 0.6f; // non-silent but revFeed=0
+            }
+            e1.process (in.data(), aux.data(), out1.data(), block, a); // 5-arg, non-null aux
+            e2.process (in.data(), out2.data(), block, a);             // 4-arg overload
+            for (int i = 0; i < block; ++i)
+                maxErr = juce::jmax (maxErr, std::abs (out1[(size_t) i] - out2[(size_t) i]));
+        }
+        bool ok = maxErr == 0.0f;
+        printf ("[%s] aux default (revFeed=0) bit-exact vs 4-arg overload: maxErr=%.2e\n",
+                ok ? "PASS" : "FAIL", maxErr);
+        fails += ok ? 0 : 1;
+    }
+
+    // aux4) in-place aliasing (house rule): in, aux and out may all alias the same buffer.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        SpectralEngine::Params a; a.feed = 0.5f; a.loss = 0.2f; a.revFeed = 0.7f;
+        std::vector<float> b (block);
+        juce::Random rng (5);
+        bool finite = true;
+        for (int blk = 0; blk < 60; ++blk)
+        {
+            for (int i = 0; i < block; ++i) b[(size_t) i] = rng.nextFloat() * 0.8f - 0.4f;
+            e.process (b.data(), b.data(), b.data(), block, a); // in == aux == out
+            if (! finiteAll (b.data(), block)) { finite = false; break; }
+        }
+        printf ("[%s] aux in-place aliasing: finite=%d\n", finite ? "PASS" : "FAIL", (int) finite);
+        fails += finite ? 0 : 1;
+    }
+
     // ---- output limiter (Threshold + Release params, agent-wiki/plan-fixes.md §4) ----
     // The limiter lives in PluginProcessor, not the engine, so this replicates its exact
     // envelope math (5 lines, mirrored from processBlock) against a synthetic peak train
