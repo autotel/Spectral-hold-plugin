@@ -9,6 +9,10 @@ class SpectralHoldProcessor;
 //   level  = opacity of a white vertical line at that x
 //   line   = vertical gradient, brightest at centre, fading to black top & bottom
 //   tint   = slight hue from phase (purple-blue -> green-blue)
+// Stereo (agent-wiki/plan-uifix.md U1): left channel's gradient projects UP from centre,
+// right channel's projects DOWN. Identical channels render the old symmetric spike; the
+// split is only visible when L and R actually differ (real stereo input, Phase Noise,
+// Spread).
 class SpectrumDisplay : public juce::Component, private juce::Timer
 {
 public:
@@ -38,8 +42,10 @@ private:
 
     SpectralHoldProcessor& proc;
 
-    std::vector<float> mag, phase;     // raw snapshot from the processor
-    std::vector<float> smoothMag;      // visual smoothing for less flicker
+    // Split stereo (agent-wiki/plan-uifix.md U1): each channel's own raw snapshot + visual
+    // smoothing, no merge. See getDisplaySnapshot().
+    std::vector<float> magL, phaseL, magR, phaseR;
+    std::vector<float> smoothMagL, smoothMagR;
     double sampleRate = 44100.0;
     int    fftSize = 0;
 

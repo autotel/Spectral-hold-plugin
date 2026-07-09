@@ -4,13 +4,27 @@
 
 ## What it shows
 - **x axis = tone, logarithmic** (`kMinHz=20` .. `min(20k, nyquist)`), low → high.
-- For each pixel column: map x → frequency → fractional bin, interpolate magnitude/phase.
+- For each pixel column: map x → frequency → fractional bin, interpolate magnitude/phase
+  **per channel** (agent-wiki/plan-uifix.md U1 — see "Split stereo" below).
 - **Level → opacity** of a white-ish vertical line at that column.
-- The vertical line is a **gradient**: transparent at top/bottom, brightest in the centre
-  band (`addColour(0.5, …)` full, `0.28`/`0.72` shoulders at 35%). Reads as a soft glow /
-  lighting effect rather than a bar.
-- **Phase → hue**, very slightly: `pt = (phase+π)/2π`, `hue = 0.72 - 0.24·pt`
+- The vertical line is a **gradient**, one channel each half: transparent at top/bottom,
+  brightest at centre (`addColour(0.49/0.51, …)` full for L/R respectively, `0.28`/`0.72`
+  shoulders at 35%). Reads as a soft glow / lighting effect rather than a bar.
+- **Phase → hue**, very slightly, per channel: `pt = (phase+π)/2π`, `hue = 0.72 - 0.24·pt`
   (purple-blue → green-blue), saturation only **0.25** so lines stay near-white.
+
+## Split stereo (agent-wiki/plan-uifix.md U1)
+Left channel's half of the gradient projects **up** from centre, right channel's projects
+**down**. Was previously `max(magL, magR)` per bin with a single symmetric gradient (see B7
+below) — that made the held tone look "ribbed" whenever the two channels differed even
+slightly (real stereo input; Phase Noise, whose jitter RNG is seeded independently per
+engine/channel; Spread's per-bin ± gain hash), because adjacent bins could jump between two
+different leakage curves from frame to frame. With genuinely identical L/R (mono material,
+or Phase Noise/Spread both off) the two halves mirror into the same symmetric spike the
+single-gradient version drew — the split costs nothing visually until the channels actually
+differ, which is exactly when the extra information becomes honest and useful (you can see
+stereo width, not just a merged blur of it). A column is skipped only when **both** channels
+are quiet, so a tone alive in just one channel still renders on its own half.
 
 ## Overlays are always visible, regardless of tab
 Both module overlays (shaper curve, harmonize influence) exist in `SpectrumDisplay` and
@@ -37,8 +51,9 @@ Ableton-style. When adding a control, register its text there too.
   header-only math the DSP uses — so the displayed curve always matches the actual shaping.
   Don't reimplement any shape's math here.
 - The **Level** shape needs a pivot mean of the active bins; the overlay approximates it
-  from the already-smoothed display magnitudes (`smoothMag`), not the engine's exact `S`
-  pivot — good enough for a preview, not meant to be sample-exact.
+  from the already-smoothed display magnitudes, **channel 0 only** (`smoothMagL` — see U1's
+  split-stereo display), not the engine's exact `S` pivot — good enough for a preview, not
+  meant to be sample-exact.
 - Params are read live from the APVTS (`shapeAmt`, `shapeMode`, `shape`, `shapeFreq`,
   `shapeWidth`, `shapeCount`, `shapeLevel`) in `paint`.
 
@@ -70,11 +85,13 @@ Ableton-style. When adding a control, register its text there too.
 - 30 Hz `Timer` calls `proc.getDisplaySnapshot()` → `SpectralEngine::copyDisplay()` per
   channel, which copies per-bin `|S|` (normalised by `2/fftSize`) and `arg(S)` under a
   try-lock. If the engine is mid-frame the call returns 0 and the last frame is kept (no
-  stall). Since agent-wiki/plan-roadmap.md B7, `getDisplaySnapshot` is **stereo**: it takes
-  `max(mag[ch0], mag[ch1])` per bin, phase stays channel 0's — falls back to channel 0 alone
-  on a mono bus or if channel 1's copy is busy/mismatched-size.
-- Magnitude is visually smoothed (`smoothMag`, fast-attack / slow-release) to cut flicker,
-  then mapped to brightness in dB: `-80..0 dB → 0..1`.
+  stall). Since agent-wiki/plan-roadmap.md B7, `getDisplaySnapshot` is **stereo**; since
+  agent-wiki/plan-uifix.md U1 it returns each channel **split** (`magL/phaseL`,
+  `magR/phaseR`), not merged — the old `max(mag[ch0], mag[ch1])` per bin was the source of
+  the "ribbed" look (see U1 above). Falls back to channel 0 in both L and R on a mono bus or
+  if channel 1's copy is busy/mismatched-size.
+- Magnitude is visually smoothed **per channel** (`smoothMagL`/`smoothMagR`, fast-attack /
+  slow-release) to cut flicker, then mapped to brightness in dB: `-80..0 dB → 0..1`.
 
 ## Location strip (agent-wiki/plan-roadmap.md B7)
 The E<->W field (agent-wiki/plan-eastwest.md) is otherwise invisible — this makes it visible.

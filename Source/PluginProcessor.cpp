@@ -415,25 +415,27 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     }
 }
 
-int SpectralHoldProcessor::getDisplaySnapshot (std::vector<float>& mag, std::vector<float>& phase,
+int SpectralHoldProcessor::getDisplaySnapshot (std::vector<float>& magL, std::vector<float>& phaseL,
+                                               std::vector<float>& magR, std::vector<float>& phaseR,
                                                double& sr, int& size)
 {
     sr   = engines[0].getSampleRate();
     size = engines[0].getFftSize();
-    const int n0 = engines[0].copyDisplay (mag, phase);
+    const int n0 = engines[0].copyDisplay (magL, phaseL);
     if (n0 == 0)
         return 0;
 
-    // Stereo (agent-wiki/plan-roadmap.md B7): show whichever channel is louder per bin
-    // (phase stays channel 0's). Falls back to channel 0 alone on a mono bus, or if
-    // channel 1's snapshot is busy / a mismatched size (mid-reconfigure).
-    if (getMainBusNumOutputChannels() > 1)
-    {
-        std::vector<float> mag1, phase1;
-        if (engines[1].copyDisplay (mag1, phase1) == n0)
-            for (int k = 0; k < n0; ++k)
-                mag[(size_t) k] = juce::jmax (mag[(size_t) k], mag1[(size_t) k]);
-    }
+    // Split stereo (agent-wiki/plan-uifix.md U1): each channel keeps its own magnitude AND
+    // phase -- the old per-bin max(ch0,ch1) merge made the tone look "ribbed" whenever the
+    // two channels differed (real stereo input, Phase Noise's independent per-engine RNG,
+    // Spread's per-bin +/- gains), since adjacent bins could jump between two different
+    // leakage curves. Falls back to channel 0 in both slots on a mono bus, or if channel 1's
+    // snapshot is busy / a mismatched size (mid-reconfigure) -- a symmetric view either way.
+    if (getMainBusNumOutputChannels() > 1 && engines[1].copyDisplay (magR, phaseR) == n0)
+        return n0;
+
+    magR = magL;
+    phaseR = phaseL;
     return n0;
 }
 

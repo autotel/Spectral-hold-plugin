@@ -63,10 +63,11 @@ public:
     void setEditorScale (float s) { editorScale = juce::jlimit (0.75f, 2.0f, s); }
     float getEditorScale() const  { return editorScale; }
 
-    // Snapshot for the spectrum display: max(channel 0, channel 1) magnitude, channel 0
-    // phase (agent-wiki/plan-roadmap.md B7). Falls back to channel 0 alone on a mono bus.
-    // Returns numBins or 0.
-    int getDisplaySnapshot (std::vector<float>& mag, std::vector<float>& phase,
+    // Snapshot for the spectrum display: each channel's own magnitude/phase, split (not
+    // merged -- see agent-wiki/plan-uifix.md U1). Falls back to channel 0 in both L and R
+    // on a mono bus. Returns numBins or 0.
+    int getDisplaySnapshot (std::vector<float>& magL, std::vector<float>& phaseL,
+                            std::vector<float>& magR, std::vector<float>& phaseR,
                             double& sr, int& size);
 
     // Harmonize influence snapshot (channel 0): peak freqs/weights/drifts. Returns count

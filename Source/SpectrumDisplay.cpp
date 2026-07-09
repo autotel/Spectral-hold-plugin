@@ -97,21 +97,29 @@ void SpectrumDisplay::timerCallback()
 
     double sr = sampleRate;
     int    sz = fftSize;
-    int n = proc.getDisplaySnapshot (mag, phase, sr, sz);
+    int n = proc.getDisplaySnapshot (magL, phaseL, magR, phaseR, sr, sz);
     if (n <= 0)
         return; // engine busy; keep last frame
 
     sampleRate = sr;
     fftSize    = sz;
 
-    if (smoothMag.size() != mag.size())
-        smoothMag.assign (mag.size(), 0.0f);
+    if (smoothMagL.size() != magL.size())
+        smoothMagL.assign (magL.size(), 0.0f);
+    if (smoothMagR.size() != magR.size())
+        smoothMagR.assign (magR.size(), 0.0f);
 
-    // attack-fast / release-slow visual envelope
-    for (size_t i = 0; i < mag.size(); ++i)
+    // attack-fast / release-slow visual envelope, per channel
+    for (size_t i = 0; i < magL.size(); ++i)
     {
-        float m = mag[i];
-        float& s = smoothMag[i];
+        float m = magL[i];
+        float& s = smoothMagL[i];
+        s += (m - s) * (m > s ? 0.6f : 0.15f);
+    }
+    for (size_t i = 0; i < magR.size(); ++i)
+    {
+        float m = magR[i];
+        float& s = smoothMagR[i];
         s += (m - s) * (m > s ? 0.6f : 0.15f);
     }
     // harmonize influence peaks (keep last frame if busy)
@@ -138,11 +146,11 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     // used for every main-view vertical extent below, so shrinking it here confines the
     // whole "lighting" view + overlays to the space above the strip, unchanged otherwise.
     const int H = juce::jmax (0, fullH - (int) kLocStripH);
-    if (smoothMag.empty() || fftSize <= 0 || W <= 0 || H <= 0)
+    if (smoothMagL.empty() || fftSize <= 0 || W <= 0 || H <= 0)
         return;
 
     const float binToHz  = (float) sampleRate / (float) fftSize;
-    const int   numBins  = (int) smoothMag.size();
+    const int   numBins  = (int) smoothMagL.size();
     const float logMin   = std::log (kMinHz);
     const float logMax   = std::log (juce::jmin (kMaxHz, (float) sampleRate * 0.5f));
 
@@ -152,7 +160,11 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         return juce::jlimit (0.0f, 1.0f, (db + 80.0f) / 80.0f);
     };
 
-    // --- spectrum "lighting" lines -----------------------------------------
+    // --- spectrum "lighting" lines -------------------------------------------
+    // Split stereo (agent-wiki/plan-uifix.md U1): left channel's gradient projects UP from
+    // centre, right channel's DOWN. Skip the column only when BOTH channels are quiet, so a
+    // tone alive in only one channel still draws. Identical L/R (mono, or just no stereo
+    // difference right now) makes the two halves mirror into the old symmetric spike.
     for (int x = 0; x < W; ++x)
     {
         float t    = (float) x / (float) (W - 1);
@@ -163,22 +175,30 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 
         int   k  = (int) fbin;
         float fr = fbin - (float) k;
-        float m  = smoothMag[(size_t) k] * (1.0f - fr) + smoothMag[(size_t) (k + 1)] * fr;
-        float ph = phase.empty() ? 0.0f : phase[(size_t) k];
+        float mL  = smoothMagL[(size_t) k] * (1.0f - fr) + smoothMagL[(size_t) (k + 1)] * fr;
+        float mR  = smoothMagR[(size_t) k] * (1.0f - fr) + smoothMagR[(size_t) (k + 1)] * fr;
+        float phL2 = phaseL.empty() ? 0.0f : phaseL[(size_t) k];
+        float phR2 = phaseR.empty() ? 0.0f : phaseR[(size_t) k];
 
-        float bright = levelToBright (m);
-        if (bright <= 0.01f)
+        float brightL = levelToBright (mL);
+        float brightR = levelToBright (mR);
+        if (brightL <= 0.01f && brightR <= 0.01f)
             continue;
 
-        float pt  = (ph + juce::MathConstants<float>::pi) * (0.5f / juce::MathConstants<float>::pi);
-        float hue = 0.72f - 0.24f * pt;
-        auto base = juce::Colour::fromHSV (hue, 0.25f, 1.0f, 1.0f);
+        auto hueOf = [] (float ph)
+        {
+            float pt = (ph + juce::MathConstants<float>::pi) * (0.5f / juce::MathConstants<float>::pi);
+            return 0.72f - 0.24f * pt;
+        };
+        auto baseL = juce::Colour::fromHSV (hueOf (phL2), 0.25f, 1.0f, 1.0f);
+        auto baseR = juce::Colour::fromHSV (hueOf (phR2), 0.25f, 1.0f, 1.0f);
 
         juce::ColourGradient grad (juce::Colours::transparentBlack, (float) x, 0.0f,
                                    juce::Colours::transparentBlack, (float) x, (float) H, false);
-        grad.addColour (0.5,  base.withAlpha (bright));
-        grad.addColour (0.28, base.withAlpha (bright * 0.35f));
-        grad.addColour (0.72, base.withAlpha (bright * 0.35f));
+        grad.addColour (0.28,  baseL.withAlpha (brightL * 0.35f));
+        grad.addColour (0.49,  baseL.withAlpha (brightL));
+        grad.addColour (0.51,  baseR.withAlpha (brightR));
+        grad.addColour (0.72,  baseR.withAlpha (brightR * 0.35f));
         g.setGradientFill (grad);
         g.fillRect ((float) x, 0.0f, 1.0f, (float) H);
     }
@@ -199,13 +219,13 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         // Level shape needs a rough pivot mean, approximated from the (already smoothed)
         // display magnitudes -- exact match isn't required, this is a preview only.
         float shMean = 0.0f;
-        if (! smoothMag.empty())
+        if (! smoothMagL.empty())
         {
             float maxMag = 0.0f;
-            for (float mg : smoothMag) maxMag = juce::jmax (maxMag, mg);
+            for (float mg : smoothMagL) maxMag = juce::jmax (maxMag, mg);
             const float activeThresh = maxMag * 1.0e-3f;
             double sum = 0.0; int cnt = 0;
-            for (float mg : smoothMag) if (mg > activeThresh) { sum += (double) mg; ++cnt; }
+            for (float mg : smoothMagL) if (mg > activeThresh) { sum += (double) mg; ++cnt; }
             shMean = (float) (sum / juce::jmax (1, cnt));
         }
         const float invShMean = 1.0f / juce::jmax (1.0e-9f, shMean);
@@ -227,7 +247,7 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             if (shMean > 1.0e-9f && fbin >= 0.0f && fbin < (float) numBins)
             {
                 int   k  = juce::jlimit (0, numBins - 1, (int) fbin);
-                float mg = smoothMag[(size_t) k];
+                float mg = smoothMagL[(size_t) k];
                 if (mg > shMean * 1.0e-3f)
                     ratio = juce::jlimit (0.01f, 100.0f, mg * invShMean);
             }
