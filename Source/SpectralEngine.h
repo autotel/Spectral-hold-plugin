@@ -18,7 +18,8 @@ public:
     {
         float feed       = 0.5f;    // 0..1  how much input is mixed into the running FT
         float loss       = 0.2f;    // 0..1  how fast held magnitudes decay
-        bool  phaseNoise = false;   // feed random jitter into the frequency tracking
+        float phaseNoise = 0.0f;    // 0..1  continuous amount of random jitter fed into
+                                    // the frequency tracking (agent-wiki/plan-roadmap.md B4)
 
         // Spectral shaper: per-bin amplitude change from a math curve (replaces the
         // old Filter + Compress). See ShapeCurves.h / agent-wiki/dsp-design.md.
@@ -47,13 +48,16 @@ public:
         // agent-wiki/plan-roadmap.md Part A / dsp-design.md "Aux input path".
         float revFeed = 0.0f;       // 0..1 aux injection amount
 
-        // Freeze (agent-wiki/plan-roadmap.md B2): stop time for the live input path only
-        // (no feed, no frequency tracking, no decay). Aux/brush/shaper/harmonize keep running.
-        bool freeze = false;
-
         // Transpose (agent-wiki/plan-roadmap.md B3): pitch-shift the OUTPUT of the held
         // sound without touching the held state (non-destructive). See dsp-design.md.
         float transpose = 0.0f; // -12..+12 semitones
+
+        // Stereo spread (agent-wiki/plan-roadmap.md B5): per-bin complementary channel gain
+        // on the OUTPUT only (never enters S). spreadSign is +1 for one channel, -1 for the
+        // other (processor sets it per-engine); the processor also forces spread=0 on a
+        // mono bus. See dsp-design.md.
+        float spread = 0.0f;    // 0..1
+        int   spreadSign = 1;   // +1 or -1
     };
 
     void prepare (double sampleRate, int maxFftOrder);
@@ -78,6 +82,12 @@ public:
     // Display snapshot: copies current per-bin magnitude (normalised) and phase.
     // Returns numBins, or 0 if the engine is mid-reconfigure (non-blocking).
     int copyDisplay (std::vector<float>& mag, std::vector<float>& phase);
+
+    // Location strip snapshot (agent-wiki/plan-roadmap.md B7): per-layer, per-bin magnitude
+    // (normalised, same units as copyDisplay) and E<->W location. Output layout is
+    // layer-major with stride numBins (NOT maxBins -- that's the internal li() stride);
+    // mag/loc are resized to kNumLayers*numBins. Returns numBins, or 0 if mid-reconfigure.
+    int copyLayers (std::vector<float>& mag, std::vector<float>& loc);
 
     // Harmonize influence snapshot: per detected peak, its frequency (Hz), weight (|S|) and
     // current pitch drift (Hz, signed). Returns the peak count (0 when harmonize is off).
@@ -177,6 +187,9 @@ private:
     // display snapshot (guarded)
     juce::CriticalSection displayLock;
     std::vector<float> dispMag, dispPhase;
+    // Location strip (agent-wiki/plan-roadmap.md B7): flat, kNumLayers*maxBins, same layout
+    // as S/binLoc (li()) -- filled in the same try-locked block as dispMag/dispPhase.
+    std::vector<float> dispLayerMag, dispLayerLoc;
 
     // brush edit queue (message thread -> audio thread)
     struct BrushOp { float centreFreq; float strength; float sigmaOct; };

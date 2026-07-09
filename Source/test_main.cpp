@@ -204,65 +204,6 @@ int main()
         fails += ok ? 0 : 1;
     }
 
-    // 4d) freeze (agent-wiki/plan-roadmap.md B2): with freeze=true and loss=1.0 (which
-    // would normally decay fast), the held level stays ~constant across silence -- no
-    // decay, no injection. freeze=false at the default params stays bit-exact vs before.
-    {
-        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
-        SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f;
-        double ph = 0.0; const double w = 2.0 * M_PI * 1000.0 / sr;
-        std::vector<float> buf (block);
-        for (int b = 0; b < 50; ++b)
-        {
-            for (int i = 0; i < block; ++i) { buf[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
-            e.process (buf.data(), buf.data(), block, d);
-        }
-
-        SpectralEngine::Params f; f.feed = 1.0f; f.loss = 1.0f; f.freeze = true; // loss would
-                                                                                  // normally decay fast
-        std::fill (buf.begin(), buf.end(), 0.0f);
-        for (int b = 0; b < 24; ++b) e.process (buf.data(), buf.data(), block, f); // flush latency
-        const float rmsBefore = rms (buf.data(), block);
-
-        bool finite = true; float rmsAfter = 0.0f;
-        for (int b = 0; b < 200; ++b)
-        {
-            std::fill (buf.begin(), buf.end(), 0.0f);
-            e.process (buf.data(), buf.data(), block, f);
-            if (! finiteAll (buf.data(), block)) { finite = false; break; }
-            rmsAfter = rms (buf.data(), block);
-        }
-        bool ok = finite && rmsBefore > 1.0e-3f && rmsAfter > rmsBefore * 0.9f;
-        printf ("[%s] freeze holds level despite loss=1.0: before=%.4f after200=%.4f\n",
-                ok ? "PASS" : "FAIL", rmsBefore, rmsAfter);
-        fails += ok ? 0 : 1;
-    }
-    {
-        SpectralEngine e1; e1.prepare (sr, 13); e1.setOrder (12); e1.reset();
-        SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
-        SpectralEngine::Params p1; p1.feed = 0.6f; p1.loss = 0.2f; p1.freeze = false;
-        SpectralEngine::Params p2 = p1; // freeze left at its default (false)
-        juce::Random rng (321);
-        std::vector<float> in1 (block), in2 (block), out1 (block), out2 (block);
-        float maxErr = 0.0f;
-        for (int b = 0; b < 40; ++b)
-        {
-            for (int i = 0; i < block; ++i)
-            {
-                const float s = rng.nextFloat() * 1.0f - 0.5f;
-                in1[(size_t) i] = s; in2[(size_t) i] = s;
-            }
-            e1.process (in1.data(), out1.data(), block, p1);
-            e2.process (in2.data(), out2.data(), block, p2);
-            for (int i = 0; i < block; ++i)
-                maxErr = juce::jmax (maxErr, std::abs (out1[(size_t) i] - out2[(size_t) i]));
-        }
-        bool ok = maxErr == 0.0f;
-        printf ("[%s] freeze=false is bit-exact vs pre-B2 behaviour: maxErr=%.2e\n",
-                ok ? "PASS" : "FAIL", maxErr);
-        fails += ok ? 0 : 1;
-    }
-
     // 4e) transpose (agent-wiki/plan-roadmap.md B3): a held 440 Hz tone, transpose=+12 st,
     // should show its energy near 880 Hz (bin remap by ratio=2). Non-destructive: the held
     // state itself is untouched, so turning transpose back off recovers the 440 Hz tone.
@@ -315,6 +256,122 @@ int main()
                   && up440 < base440 * 0.3f && back440 > base440 * 0.7f;
         printf ("[%s] transpose +12st shifts to ~880Hz, non-destructive: 440base=%.4f 880up=%.4f 440up=%.4f 440restored=%.4f\n",
                 ok ? "PASS" : "FAIL", base440, up880, up440, back440);
+        fails += ok ? 0 : 1;
+    }
+
+    // 4f) stereo spread (agent-wiki/plan-roadmap.md B5): momentary per-bin L/R gain, never
+    // touches the held state. At spread=1 the two channels (signs +1/-1) differ, but total
+    // energy L^2+R^2 stays close to 2x a single spread=0 channel (equal-power).
+    {
+        SpectralEngine eL; eL.prepare (sr, 13); eL.setOrder (12); eL.reset();
+        SpectralEngine eR; eR.prepare (sr, 13); eR.setOrder (12); eR.reset();
+        SpectralEngine e0; e0.prepare (sr, 13); e0.setOrder (12); e0.reset();
+
+        SpectralEngine::Params pL; pL.feed = 0.7f; pL.loss = 0.3f; pL.spread = 1.0f; pL.spreadSign = 1;
+        SpectralEngine::Params pR = pL; pR.spreadSign = -1;
+        SpectralEngine::Params p0 = pL; p0.spread = 0.0f;
+
+        juce::Random rng (555);
+        std::vector<float> inBuf (block), bL (block), bR (block), b0 (block);
+        double sumL = 0.0, sumR = 0.0, sum0 = 0.0;
+        float maxDiffLR = 0.0f;
+        const int nBlocks = (int) (0.6 * sr / block);
+        for (int b = 0; b < nBlocks; ++b)
+        {
+            for (int i = 0; i < block; ++i) inBuf[(size_t) i] = rng.nextFloat() * 1.0f - 0.5f;
+            bL = inBuf; bR = inBuf; b0 = inBuf;
+            eL.process (bL.data(), bL.data(), block, pL);
+            eR.process (bR.data(), bR.data(), block, pR);
+            e0.process (b0.data(), b0.data(), block, p0);
+            if (b > nBlocks / 2) // measure over the settled tail
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    maxDiffLR = juce::jmax (maxDiffLR, std::abs (bL[(size_t) i] - bR[(size_t) i]));
+                    sumL += (double) bL[(size_t) i] * bL[(size_t) i];
+                    sumR += (double) bR[(size_t) i] * bR[(size_t) i];
+                    sum0 += (double) b0[(size_t) i] * b0[(size_t) i];
+                }
+            }
+        }
+        const double ratioDb = 10.0 * std::log10 (juce::jmax (1.0e-12, sumL + sumR)
+                                                    / juce::jmax (1.0e-12, 2.0 * sum0));
+        bool ok = maxDiffLR > 1.0e-4f && std::abs (ratioDb) < 1.0;
+        printf ("[%s] stereo spread: L!=R maxDiff=%.2e, L^2+R^2 vs 2x mono = %.2f dB\n",
+                ok ? "PASS" : "FAIL", maxDiffLR, ratioDb);
+        fails += ok ? 0 : 1;
+    }
+    {
+        SpectralEngine e1; e1.prepare (sr, 13); e1.setOrder (12); e1.reset();
+        SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+        SpectralEngine::Params p1; p1.feed = 0.6f; p1.loss = 0.2f; p1.spread = 0.0f;
+        SpectralEngine::Params p2 = p1; // spread left at its default (0.0f)
+        juce::Random rng (556);
+        std::vector<float> in1 (block), in2 (block), out1 (block), out2 (block);
+        float maxErr = 0.0f;
+        for (int b = 0; b < 40; ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const float s = rng.nextFloat() * 1.0f - 0.5f;
+                in1[(size_t) i] = s; in2[(size_t) i] = s;
+            }
+            e1.process (in1.data(), out1.data(), block, p1);
+            e2.process (in2.data(), out2.data(), block, p2);
+            for (int i = 0; i < block; ++i)
+                maxErr = juce::jmax (maxErr, std::abs (out1[(size_t) i] - out2[(size_t) i]));
+        }
+        bool ok = maxErr == 0.0f;
+        printf ("[%s] spread=0 bit-exact vs default: maxErr=%.2e\n", ok ? "PASS" : "FAIL", maxErr);
+        fails += ok ? 0 : 1;
+    }
+
+    // 4g) undo (agent-wiki/plan-roadmap.md B6): reuses B1's writeHold/queueHoldRestore as
+    // the snapshot blob. Snapshot pre-edit, apply a destructive brush cut, restore -- the
+    // held spectrum should land back close to where it was before the cut (edit-undo, not
+    // full engine-level state equality, since the STFT re-analyses each hop).
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f;
+        double ph = 0.0; const double w = 2.0 * M_PI * 1000.0 / sr;
+        std::vector<float> buf (block);
+        for (int b = 0; b < (int) (0.4 * sr / block); ++b)
+        {
+            for (int i = 0; i < block; ++i) { buf[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
+            e.process (buf.data(), buf.data(), block, d);
+        }
+
+        SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f;
+        auto measure = [&]
+        {
+            // flush a full frame past the STFT latency (fftSize=4096=16 blocks) so any
+            // just-queued brush/restore has actually been drained and propagated to the
+            // snapshot, not just polling for the first (possibly stale) non-empty one.
+            for (int b = 0; b < 24; ++b) { std::fill (buf.begin(), buf.end(), 0.0f); e.process (buf.data(), buf.data(), block, h); }
+            std::vector<float> m, ph2;
+            e.copyDisplay (m, ph2);
+            return m;
+        };
+        const std::vector<float> preMags = measure();
+
+        juce::MemoryOutputStream blob;
+        e.writeHold (blob); // the undo snapshot, taken before the destructive edit
+
+        for (int i = 0; i < 120; ++i) e.queueBrush (1000.0f, -1.0f, 0.6f); // destructive cut
+        const std::vector<float> cutMags = measure();
+
+        e.queueHoldRestore (blob.getData(), blob.getDataSize());
+        const std::vector<float> restoredMags = measure();
+
+        const int bin1k = (int) std::lround (1000.0 * 4096.0 / sr);
+        bool finite = finiteAll (restoredMags.data(), (int) restoredMags.size());
+        bool cutWorked = cutMags[(size_t) bin1k] < preMags[(size_t) bin1k] * 0.5f;
+        bool restored = std::abs (restoredMags[(size_t) bin1k] - preMags[(size_t) bin1k])
+                         < preMags[(size_t) bin1k] * 0.15f;
+        bool ok = finite && cutWorked && restored;
+        printf ("[%s] undo: pre=%.4f cut=%.4f restored=%.4f (bin %d)\n",
+                ok ? "PASS" : "FAIL", preMags[(size_t) bin1k], cutMags[(size_t) bin1k],
+                restoredMags[(size_t) bin1k], bin1k);
         fails += ok ? 0 : 1;
     }
 
@@ -1009,6 +1066,37 @@ int main()
         printf ("[%s] ew location layers: coexist without stealing: W %.4f->%.3f, E %.3f->%.3f\n",
                 ok ? "PASS" : "FAIL", atW0, atW1, atE0, atE1);
         fails += ok ? 0 : 1;
+
+        // ew3b) location strip snapshot (agent-wiki/plan-roadmap.md B7): copyLayers should
+        // surface the two tones just deposited above (same bin, different locations) as two
+        // separate, populated layers -- shape/finiteness of the flat buffer, then content.
+        {
+            std::vector<float> lmag, lloc;
+            SpectralEngine::Params z; z.feed = 0.0f; z.loss = 0.0f;
+            std::vector<float> zbuf (block, 0.0f);
+            int n = 0;
+            for (int t = 0; t < 8 && n == 0; ++t)
+            {
+                e.process (zbuf.data(), zbuf.data(), block, z);
+                n = e.copyLayers (lmag, lloc);
+            }
+            bool sizesOk = n > 0 && lmag.size() == lloc.size() && lmag.size() % (size_t) n == 0;
+            const int layers = sizesOk ? (int) (lmag.size() / (size_t) n) : 0;
+            bool finite = finiteAll (lmag.data(), (int) lmag.size()) && finiteAll (lloc.data(), (int) lloc.size());
+
+            float magNearE = 0.0f, magNearW = 0.0f;
+            for (int l = 0; sizesOk && l < layers; ++l)
+            {
+                const float m  = lmag[(size_t) (l * n + bA)];
+                const float lo = lloc[(size_t) (l * n + bA)];
+                if (lo < 0.5f) magNearE = juce::jmax (magNearE, m);
+                else           magNearW = juce::jmax (magNearW, m);
+            }
+            bool ok2 = sizesOk && finite && layers >= 2 && magNearE > 1.0e-3f && magNearW > 1.0e-3f;
+            printf ("[%s] location strip snapshot (copyLayers): layers=%d bins=%d magNearE=%.4f magNearW=%.4f\n",
+                    ok2 ? "PASS" : "FAIL", layers, n, magNearE, magNearW);
+            fails += ok2 ? 0 : 1;
+        }
     }
 
     // ew3c) claim boundary: feeding the SAME pitch near the East tone (att >= kClaimAtt)

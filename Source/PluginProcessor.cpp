@@ -34,9 +34,9 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pEwLocation = apvts.getRawParameterValue ("ewLocation");
     pDryWet = apvts.getRawParameterValue ("dryWet");
     pOutput = apvts.getRawParameterValue ("output");
-    pPhaseNoise = apvts.getRawParameterValue ("phaseNoise");
-    pFreeze     = apvts.getRawParameterValue ("freeze");
+    pPhaseNoise = apvts.getRawParameterValue ("phaseNoiseAmt");
     pTranspose  = apvts.getRawParameterValue ("transpose");
+    pSpread     = apvts.getRawParameterValue ("spread");
     pLimThreshold = apvts.getRawParameterValue ("limThreshold");
     pLimRelease   = apvts.getRawParameterValue ("limRelease");
 
@@ -67,17 +67,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     AudioProcessorValueTreeState::ParameterLayout layout;
 
     // Creation order = host page order (Push/Maschine bank 8 consecutive params per
-    // page). Regrouped by agent-wiki/plan-roadmap.md B0/B2 (was plan-fixes.md §9's three
-    // pages of 8; freeze now closes P1, phaseNoise moved to the interim P4):
-    //   P1 "Hold":   feed, loss, ewLocation, dryWet, output, limThreshold, limRelease,
-    //                freeze
+    // page). Regrouped by agent-wiki/plan-roadmap.md B0 (was plan-fixes.md §9's three
+    // pages of 8):
+    //   P1 "Hold":   feed, loss, ewLocation, dryWet, output, limThreshold, limRelease
     //   P2 "Shaper": shapeAmt, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel,
     //                shapeMode, harmonize   (harmonize closing the sculpt page is the
     //                accepted compromise to hit 8/8/8)
     //   P3 "Space":  harmWidth, harmonic, revMix, revDecay, revDamp, revSize,
     //                revPredelay, revMetal
-    //   P4 "Perform" (partial, interim): revFeed, phaseNoise -- final slots land once B3
-    //                (transpose), B4 (continuous phaseNoiseAmt) and B5 (spread) do.
+    //   P4 "Perform" (partial, final target order): transpose, spread, phaseNoiseAmt,
+    //                revFeed (+ morph if B11 lands) -- 4/8, accepted partial page.
     // Parameter IDs are unchanged by this grouping -- state restores by ID, not index.
 
     // --- P1: Hold ---
@@ -110,12 +109,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "limRelease", 1 }, "Limiter Release",
         NormalisableRange<float> (50.0f, 5000.0f, 0.0f, 0.4f), 1200.0f)); // ms, skewed
-
-    // Freeze (agent-wiki/plan-roadmap.md B2): stop time -- closes P1's 8-slot page. Takes
-    // phaseNoise's old slot; phaseNoise moves to the interim P4 group below (it becomes a
-    // continuous Phase Noise amount there once B4 lands).
-    layout.add (std::make_unique<AudioParameterBool> (
-        ParameterID { "freeze", 1 }, "Freeze", false));
 
     // --- P2: Shaper (replaces the old Filter + Compress; see agent-wiki/dsp-design.md) ---
     layout.add (std::make_unique<AudioParameterFloat> (
@@ -187,21 +180,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "revMetal", 1 }, "Reverb Metal",
         NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // less diffusion, no LFO smear
 
-    // --- P4 "Perform" (partial, interim): transpose (B3) + revFeed (Part A) + phaseNoise
-    // (moved out of P1 by the B2 regroup). Final target order (once B4/B5 land continuous
-    // phaseNoiseAmt and spread) is Transpose, Spread, Phase Noise, Reverb Feed -- see
-    // agent-wiki/plan-roadmap.md B0.
+    // --- P4 "Perform" (partial, interim): final target order per agent-wiki/plan-roadmap.md
+    // B0 -- Transpose, Spread, Phase Noise, Reverb Feed (+ morph if B11 lands).
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "transpose", 1 }, "Transpose",
         NormalisableRange<float> (-12.0f, 12.0f), 0.0f,
         AudioParameterFloatAttributes().withLabel ("st")));
 
+    // Stereo spread (agent-wiki/plan-roadmap.md B5): momentary per-bin L/R gain, never
+    // touches the held state. spread=0 is a no-op on both mono and stereo buses.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "spread", 1 }, "Spread",
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
+    // Continuous Phase Noise (agent-wiki/plan-roadmap.md B4): replaces the old bool
+    // `phaseNoise`. Migrated from old sessions in setStateInformation() (legacy "on" -> 0.3).
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "phaseNoiseAmt", 1 }, "Phase Noise",
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revFeed", 1 }, "Reverb Feed",
         NormalisableRange<float> (0.0f, 1.0f), 0.0f));
-
-    layout.add (std::make_unique<AudioParameterBool> (
-        ParameterID { "phaseNoise", 1 }, "Phase Noise", false));
 
     return layout;
 }
@@ -284,8 +284,7 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     p.feed       = pFeed->load();
     p.loss       = pLoss->load();
     p.ewLocation = pEwLocation->load();
-    p.phaseNoise = pPhaseNoise->load() > 0.5f;
-    p.freeze     = pFreeze->load() > 0.5f;
+    p.phaseNoise = pPhaseNoise->load();
     // note 60 (middle C) = no shift, so playing with no MIDI input matches the knob alone.
     // Not clamped to the knob's +/-12 st DAW range -- playing further from middle C should
     // keep transposing further, not flatten out at an octave.
@@ -302,6 +301,8 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     p.shapeCount = pShapeCount->load();
     p.shapeLevel = pShapeLevel->load();
     p.revFeed    = pRevFeed->load();
+    p.spread     = numCh > 1 ? pSpread->load() : 0.0f; // agent-wiki/plan-roadmap.md B5:
+                                                        // no L/R to spread on a mono bus
 
     // --- global dry/wet: capture and mix the latency-aligned dry input. The rings
     // are always fed (cheap) so turning the knob down never reads stale audio, but at
@@ -321,6 +322,7 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     {
         auto* d = buffer.getWritePointer (ch);
         auto& eng = engines[(size_t) ch];
+        p.spreadSign = (ch == 0) ? 1 : -1; // agent-wiki/plan-roadmap.md B5
         dryDelay[(size_t) ch].process (d, dryScratch.data(), numSamples, eng.getLatency());
         eng.process (d, auxTap, d, numSamples, p); // in place: capture dry BEFORE this
         if (dryWet < 1.0f)
@@ -418,7 +420,21 @@ int SpectralHoldProcessor::getDisplaySnapshot (std::vector<float>& mag, std::vec
 {
     sr   = engines[0].getSampleRate();
     size = engines[0].getFftSize();
-    return engines[0].copyDisplay (mag, phase);
+    const int n0 = engines[0].copyDisplay (mag, phase);
+    if (n0 == 0)
+        return 0;
+
+    // Stereo (agent-wiki/plan-roadmap.md B7): show whichever channel is louder per bin
+    // (phase stays channel 0's). Falls back to channel 0 alone on a mono bus, or if
+    // channel 1's snapshot is busy / a mismatched size (mid-reconfigure).
+    if (getMainBusNumOutputChannels() > 1)
+    {
+        std::vector<float> mag1, phase1;
+        if (engines[1].copyDisplay (mag1, phase1) == n0)
+            for (int k = 0; k < n0; ++k)
+                mag[(size_t) k] = juce::jmax (mag[(size_t) k], mag1[(size_t) k]);
+    }
+    return n0;
 }
 
 void SpectralHoldProcessor::getStateInformation (juce::MemoryBlock& dest)
@@ -428,6 +444,7 @@ void SpectralHoldProcessor::getStateInformation (juce::MemoryBlock& dest)
     state.setProperty ("liveMode", liveMode, nullptr);
     state.setProperty ("uiTab", uiTab, nullptr);
     state.setProperty ("keepSound", keepSound, nullptr);
+    state.setProperty ("editorScale", editorScale, nullptr);
 
     // Hold serialization (agent-wiki/plan-roadmap.md B1): the held spectral state is the
     // whole product, so it's saved inside the session unless the user turns Keep off.
@@ -462,11 +479,28 @@ void SpectralHoldProcessor::setStateInformation (const void* data, int size)
         return;
 
     auto tree = juce::ValueTree::fromXml (*xml);
+
+    // Phase Noise migration (agent-wiki/plan-roadmap.md B4): old sessions saved the bool
+    // `phaseNoise`. Must be read **before** replaceState() below -- it redirects `state`
+    // onto this same (reference-counted) tree and appends any missing PARAM children
+    // (including a fresh, default `phaseNoiseAmt`) in place, so checking afterwards would
+    // always see the new param and never detect an old session.
+    bool hadOldPhaseNoiseOn = false;
+    for (const auto& child : tree)
+        if (child.hasType ("PARAM") && child.getProperty ("id").toString() == "phaseNoise"
+            && (float) child.getProperty ("value") > 0.5f)
+            hadOldPhaseNoiseOn = true;
+
     apvts.replaceState (tree);
+
+    if (hadOldPhaseNoiseOn)
+        if (auto* param = apvts.getParameter ("phaseNoiseAmt"))
+            param->setValueNotifyingHost (0.3f); // 0..1 range, so 0.3 of range == 0.3
 
     setLiveMode    ((bool) tree.getProperty ("liveMode", false));
     uiTab         = juce::jlimit (0, 2, (int) tree.getProperty ("uiTab", 0));
     keepSound     = (bool) tree.getProperty ("keepSound", true);
+    setEditorScale ((float) tree.getProperty ("editorScale", 1.0f));
 
     // order must land before the hold restore below -- queueHoldRestore()'s blob only
     // applies once the engine's order matches the blob's (see applyPendingHold()).
@@ -492,6 +526,40 @@ void SpectralHoldProcessor::setStateInformation (const void* data, int size)
 
         engines[ch].queueHoldRestore (raw.getData(), raw.getDataSize());
     }
+}
+
+void SpectralHoldProcessor::snapshotHold()
+{
+    if (! prepared)
+        return;
+
+    juce::MemoryOutputStream raw0, raw1;
+    {
+        // writeHold() reads live audio-thread state with no lock of its own -- see
+        // PluginProcessor::getStateInformation, same pattern reused here.
+        const juce::ScopedLock sl (getCallbackLock());
+        engines[0].writeHold (raw0);
+        engines[1].writeHold (raw1);
+    }
+
+    undoRing[(size_t) undoWriteIdx] = { juce::MemoryBlock (raw0.getData(), raw0.getDataSize()),
+                                         juce::MemoryBlock (raw1.getData(), raw1.getDataSize()) };
+    undoWriteIdx = (undoWriteIdx + 1) % (int) undoRing.size();
+    undoCount = juce::jmin ((int) undoRing.size(), undoCount + 1);
+}
+
+bool SpectralHoldProcessor::undoHold()
+{
+    if (undoCount == 0)
+        return false;
+
+    undoWriteIdx = (undoWriteIdx - 1 + (int) undoRing.size()) % (int) undoRing.size();
+    --undoCount;
+
+    const auto& snap = undoRing[(size_t) undoWriteIdx];
+    engines[0].queueHoldRestore (snap.first.getData(), snap.first.getSize());
+    engines[1].queueHoldRestore (snap.second.getData(), snap.second.getSize());
+    return true;
 }
 
 juce::AudioProcessorEditor* SpectralHoldProcessor::createEditor()

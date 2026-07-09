@@ -42,10 +42,14 @@ delayed by the engine's `fftSize` so dry and wet stay time-aligned.
   preallocated at `prepare`). FFT-size change is applied here at a frame boundary.
 - **Message thread:** the editor. Knob moves go through APVTS (thread-safe atomics).
   The FFT-size combo calls `setFftOrder()` → engines store a `pendingOrder` (atomic).
-- **Display handoff:** the engine writes a magnitude/phase snapshot under a
-  `CriticalSection` try-lock at the end of each frame; the editor's timer copies it out
-  under the same lock. Non-blocking on the audio side — it skips the snapshot if the
-  editor holds the lock, never the reverse.
+- **Display handoff:** the engine writes several snapshots under the same `CriticalSection`
+  try-lock, at the end of each frame, all copied out by the editor's 30 Hz timer under that
+  same lock (non-blocking on the audio side — it skips the write if the editor holds the
+  lock, never the reverse): `dispMag`/`dispPhase` (main spectrum, `copyDisplay`),
+  `dispPeakF/A/D` (harmonize influence, `copyPeaks`), and, since agent-wiki/plan-roadmap.md
+  B7, `dispLayerMag`/`dispLayerLoc` (per-layer magnitude + E<->W location, `copyLayers`,
+  feeds `SpectrumDisplay`'s location strip). `getDisplaySnapshot` additionally merges channel
+  0 and 1 (`max` per bin, phase from ch 0) — see [gui-display.md](gui-display.md).
 
 ## Parameters & state
 - DAW-facing params live in `apvts` (see [parameters.md](parameters.md) for the full list).

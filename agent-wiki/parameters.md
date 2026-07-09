@@ -4,26 +4,32 @@ DAW-facing parameters are defined in `SpectralHoldProcessor::createLayout()`.
 The engine consumes them via `SpectralEngine::Params`. FFT size is separate (GUI-only).
 
 **Creation order = host page order.** Push/Maschine bank 8 consecutive params per page, so
-`createLayout()` order is the grouping — 26 params, three full pages of 8 plus a page-4
-opener (regrouped by agent-wiki/plan-roadmap.md B0/B2 — freeze now closes P1, phaseNoise
-moved to the interim P4):
-- **P1 "Hold"**: Feed, Loss, E↔W, Dry/Wet, Output, Limiter Threshold, Limiter Release, **Freeze**.
+`createLayout()` order is the grouping — 27 params, two full pages of 8 plus a partial P1
+and a partial page-4 (regrouped by agent-wiki/plan-roadmap.md B0):
+- **P1 "Hold"**: Feed, Loss, E↔W, Dry/Wet, Output, Limiter Threshold, Limiter Release.
 - **P2 "Shaper"**: Amount, Shape, Freq, Width, Count, Level, Feed (shapeMode), Harmonize.
   Harmonize's *master amount* closes this page — accepted so the shaper's own 7 params plus
   one harmonize knob hit exactly 8; the two harmonize *character* knobs live on page 3.
 - **P3 "Space"**: Harm Width, Harmonics (harmonic), Mix, Decay, Damp, Size, Predelay, Metal.
-- **P4 "Perform" (partial, interim)**: Transpose, Reverb Feed (`revFeed`), Phase Noise.
-  Final slots land once B4 (continuous Phase Noise amount) and B5 (Spread) do — final
-  target order is Transpose, Spread, Phase Noise, Reverb Feed (see plan-roadmap.md B0).
+- **P4 "Perform" (partial, final target order, 4/8 — see plan-roadmap.md B0)**: Transpose,
+  Spread, Phase Noise (`phaseNoiseAmt`), Reverb Feed (`revFeed`).
 
 Parameter **IDs are unchanged** by this grouping (only `createLayout()`'s call order moved)
 — saved sessions restore by ID, so this reorder is state-compatible.
 
 **Editor layout (tabs, not a knob wall):** the display on top; a persistent performance
 row **Feed, Loss, E↔W, Dry/Wet, Output, Thresh, Release**; a tab strip
-**Shaper | Harmonize | Reverb** switching one shared knob row; the utility row (Phase
-Noise, Live, Brush, FT Size); and an **info bar** at the bottom that shows a one-line
-description of whatever control the mouse is over (Ableton-style).
+**Shaper | Harmonize | Reverb** switching one shared knob row; the utility row (Live, Keep,
+Undo, Transpose, Phase Noise, Brush, FT Size — see `resized()`'s width-budget comment
+before adding another control, it's already tight); and an **info bar** at the bottom that
+shows a one-line description of whatever control the mouse is over (Ableton-style). `spread`
+has **no GUI widget** — the utility row is full; it's host-automatable / generic-editor only
+until B8 (resizable editor) or a dedicated P4 tab makes room.
+
+**Undo** (agent-wiki/plan-roadmap.md B6, GUI-only, not a DAW param): "Undo" button in the
+utility row, reverts the held sound to before the last brush stroke or permanent-shaper
+engagement. Edit-undo, not time-travel — harmonize drift, loss decay and normal feeding are
+never snapshotted. Reuses B1's `writeHold`/`queueHoldRestore` as an in-memory ring (depth 4).
 
 | GUI / id            | Range          | Default | Meaning / mapping |
 |---------------------|----------------|---------|-------------------|
@@ -34,8 +40,7 @@ description of whatever control the mouse is over (Ableton-style).
 | Output `output`     | 0 .. 2         | 1.0     | Final output level (linear gain), applied **before** the limiter so it still protects ±1. |
 | Thresh `limThreshold` | -24 .. 0 dB  | 0       | Output limiter ceiling. The linked limiter pulls the level down to this; at the default 0 dB it's exactly the old fixed "don't clip ±1" behaviour. |
 | Release `limRelease` | 50 .. 5000 ms | 1200   | How fast the limiter recovers after pulling down. Attack is fixed (5 ms, not exposed) — always fast enough to catch peaks. |
-| Freeze `freeze`     | bool           | off     | Stops time for the **live input path only**: no feed, no frequency tracking, no decay (loss is bypassed, `decayL=1`). Brush, shaper, harmonize and the reverb-feed (`revFeed`) aux path keep running — freeze stops input, not editing. See [dsp-design.md](dsp-design.md). |
-| Phase Noise `phaseNoise` | bool      | off     | When on, injects ±`kPhaseNoise` rad of per-frame random jitter into each bin's phase advance (shimmer/roughness). Non-accumulating — does not permanently detune. |
+| Phase Noise `phaseNoiseAmt` | 0 .. 1 | 0.0     | Continuous amount of per-frame random jitter injected into each bin's phase advance (shimmer/roughness): `±kPhaseNoiseMax·amt` rad, `kPhaseNoiseMax=0.5`. Non-accumulating — does not permanently detune. Replaces the old bool `phaseNoise` (id changed; old sessions with it on migrate to `amt=0.3`, see [gotchas.md](gotchas.md)). |
 | Harmonize `harmonize` | 0 .. 0.1   | 0.0     | Master amount of coupled-oscillator pitch interaction. See [harmonize.md](harmonize.md). Inherently *permanent* (no mode knob — see gotchas.md). |
 | Width `harmWidth`     | 0.01 .. 3 oct | 0.5  | σ of the nearness-influence curve. |
 | Harmonics `harmonic`  | 0 .. 1     | 0.0     | Character blend under Harmonize: 0 = entrainment, 1 = harmonic attraction. (GUI label was "Harmonic", id unchanged.) |
@@ -96,8 +101,19 @@ size-knob-pitch-bend behavior.
 - **FT size** range is `kMinFftOrder=10 .. kMaxFftOrder=13` (orders, i.e. log2). Engines
   preallocate at the max order; changing size never allocates on the audio thread.
 - Changing FT size **resets** the held state and changes plugin latency. Expected.
-- **Live**, **Keep**, and the active tab are GUI-only values persisted in the state tree
-  (like FT size), not APVTS params; `setStateInformation` restores them.
+- **Live**, **Keep**, **editor scale** (agent-wiki/plan-roadmap.md B8), and the active tab
+  are GUI-only values persisted in the state tree (like FT size), not APVTS params;
+  `setStateInformation` restores them.
+- **Editor is resizable** (agent-wiki/plan-roadmap.md B8): a uniform visual scale of the
+  fixed 860x580 layout (aspect-ratio-locked, 0.75x..2.0x), not a reflow — see
+  [gui-display.md](gui-display.md) "Resizable editor".
+- **Presets** (agent-wiki/plan-roadmap.md B9, `Source/Presets.h`, GUI convenience — no host
+  program API): a ComboBox at the right end of the tab strip. Selecting one resets every DAW
+  parameter to its default, then applies the preset's specific overrides (plain units via
+  `convertTo0to1`); touching any knob afterward deselects it (combo shows "Preset" again).
+  Never touches FT size, the held state, or GUI-only toggles. **The ~8 shipped presets are
+  placeholders, not curated by ear yet** — see gotchas.md before treating their values as
+  meaningful sound design.
 - **Keep** (agent-wiki/plan-roadmap.md B1, default **on**): saves the held spectral state
   inside the session (gzip'd + base64'd per channel, `SpectralEngine::writeHold`/
   `queueHoldRestore`), so a frozen sound survives save/reopen. Off = old behaviour (silent

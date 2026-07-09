@@ -58,6 +58,29 @@ jobs:
         if: runner.os == 'Windows'
         run: plugin/build/SpectralHoldTest_artefacts/Release/SpectralHoldTest.exe
 
+      # CLAP (agent-wiki/plan-roadmap.md B10): Linux-only in CI -- it's a separate CMake
+      # configure with SPECTRALHOLD_CLAP=ON (off above so the main configure/build stays
+      # offline-fast, see build.sh), fetching clap-juce-extensions over the network.
+      # Build-only here (no Linux CLAP host in the runner to load it into).
+      - name: Configure CLAP (Linux)
+        if: runner.os == 'Linux'
+        run: >
+          cmake -S plugin -B plugin/build-clap -DCMAKE_BUILD_TYPE=Release
+          -DJUCE_PATH=${{ github.workspace }}/JUCE -DSPECTRALHOLD_CLAP=ON
+
+      - name: Build CLAP (Linux)
+        if: runner.os == 'Linux'
+        run: >
+          cmake --build plugin/build-clap --config Release --parallel
+          --target SpectralHold_CLAP
+
+      - name: Upload CLAP (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpectralHold-CLAP-Linux
+          path: plugin/build-clap/SpectralHold_artefacts/Release/CLAP/Spectral Hold.clap
+
       - name: Upload VST3
         uses: actions/upload-artifact@v4
         with:

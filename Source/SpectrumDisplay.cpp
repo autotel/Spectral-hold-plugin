@@ -13,6 +13,7 @@ SpectrumDisplay::SpectrumDisplay (SpectralHoldProcessor& p) : proc (p)
     pShapeLevel = proc.apvts.getRawParameterValue ("shapeLevel");
     pHarm      = proc.apvts.getRawParameterValue ("harmonize");
     pHarmWidth = proc.apvts.getRawParameterValue ("harmWidth");
+    pEwLocation = proc.apvts.getRawParameterValue ("ewLocation");
     setMouseCursor (juce::MouseCursor::NoCursor); // we draw our own brush cursor
     startTimerHz (30);
 }
@@ -54,7 +55,15 @@ void SpectrumDisplay::updateBrushTarget (const juce::MouseEvent& e)
     brushPressure = e.source.isPressureValid() ? juce::jlimit (0.05f, 1.0f, e.pressure) : 1.0f;
 }
 
-void SpectrumDisplay::mouseDown (const juce::MouseEvent& e) { brushHeld = true;  updateBrushTarget (e); repaint(); }
+void SpectrumDisplay::mouseDown (const juce::MouseEvent& e)
+{
+    // Undo (agent-wiki/plan-roadmap.md B6): snapshot before the first edit of a stroke,
+    // not on every drag tick -- one snapshot per stroke, so Undo reverts the whole gesture.
+    proc.snapshotHold();
+    brushHeld = true;
+    updateBrushTarget (e);
+    repaint();
+}
 void SpectrumDisplay::mouseDrag (const juce::MouseEvent& e) { updateBrushTarget (e); repaint(); }
 void SpectrumDisplay::mouseUp   (const juce::MouseEvent&)   { brushHeld = false; repaint(); }
 
@@ -110,6 +119,11 @@ void SpectrumDisplay::timerCallback()
     if (np >= 0)
         peakCount = np;
 
+    // location strip (agent-wiki/plan-roadmap.md B7): keep last frame if busy, same as above
+    int nLoc = proc.getLocationSnapshot (layerMag, layerLoc);
+    if (nLoc > 0)
+        locBins = nLoc;
+
     repaint();
 }
 
@@ -119,7 +133,11 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     g.fillAll (juce::Colours::black);
 
     const int W = getWidth();
-    const int H = getHeight();
+    const int fullH = getHeight();
+    // Reserve the location strip's band at the bottom (agent-wiki/plan-roadmap.md B7); H is
+    // used for every main-view vertical extent below, so shrinking it here confines the
+    // whole "lighting" view + overlays to the space above the strip, unchanged otherwise.
+    const int H = juce::jmax (0, fullH - (int) kLocStripH);
     if (smoothMag.empty() || fftSize <= 0 || W <= 0 || H <= 0)
         return;
 
@@ -314,5 +332,52 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         g.fillEllipse (mousePos.x - 3.0f, mousePos.y - 3.0f, 6.0f, 6.0f);
         g.setColour (juce::Colours::white.withAlpha (0.15f));
         g.drawHorizontalLine ((int) ((float) H * 0.5f), 0.0f, (float) W); // centre = no change
+    }
+
+    // --- location strip (agent-wiki/plan-roadmap.md B7): the E<->W field, otherwise
+    // invisible. Shares the main view's log-frequency x-mapping (xToFreq/freqToX depend
+    // only on width, not on the H/fullH split above). y: East (loc=0) at the strip's
+    // bottom, West (loc=1) at its top -- matches ewLocation's 0=East/1=West convention.
+    if (locBins > 0 && ! layerMag.empty())
+    {
+        const int layers = (int) (layerMag.size() / (size_t) locBins);
+        const float stripBottom = (float) fullH;
+
+        g.setColour (juce::Colours::white.withAlpha (0.06f));
+        g.fillRect (0.0f, (float) H, (float) W, kLocStripH);
+        g.setColour (juce::Colours::white.withAlpha (0.15f));
+        g.drawHorizontalLine (H, 0.0f, (float) W);
+
+        // hue by layer (not phase -- copyLayers doesn't carry it), same 0.48-0.72 family
+        // the main view's phase-hue uses, so the strip reads as part of the same palette.
+        for (int l = 0; l < layers; ++l)
+        {
+            const float hue = 0.72f - 0.24f * (layers > 1 ? (float) l / (float) (layers - 1) : 0.0f);
+            const auto  base = juce::Colour::fromHSV (hue, 0.55f, 1.0f, 1.0f);
+            for (int k = 1; k < locBins; ++k)
+            {
+                const float m = layerMag[(size_t) (l * locBins + k)];
+                if (m <= 1.0e-4f)
+                    continue;
+                const float freq = (float) k * binToHz;
+                if (freq < kMinHz || freq > kMaxHz)
+                    continue;
+                const float loc   = layerLoc[(size_t) (l * locBins + k)];
+                const float x     = freqToX (freq);
+                const float y     = stripBottom - loc * kLocStripH;
+                const float alpha = juce::jlimit (0.0f, 1.0f, std::sqrt (m));
+                g.setColour (base.withAlpha (alpha));
+                g.fillEllipse (x - 1.5f, y - 1.5f, 3.0f, 3.0f);
+            }
+        }
+
+        // marker line at the ewLocation knob (the listener position)
+        if (pEwLocation != nullptr)
+        {
+            const float ewL = juce::jlimit (0.0f, 1.0f, pEwLocation->load());
+            const float my  = stripBottom - ewL * kLocStripH;
+            g.setColour (juce::Colours::white.withAlpha (0.4f));
+            g.drawHorizontalLine ((int) my, 0.0f, (float) W);
+        }
     }
 }

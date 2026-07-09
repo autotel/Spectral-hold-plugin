@@ -58,6 +58,15 @@ private:
     std::vector<float> peakFreq, peakWeight, peakDrift;
     int peakCount = 0;
 
+    // Location strip (agent-wiki/plan-roadmap.md B7): shows the E<->W field, invisible
+    // otherwise. layerMag/layerLoc are flat, layer-major, stride locBins (see
+    // SpectralEngine::copyLayers); the layer count is inferred from the ratio, since the
+    // engine's kNumLayers isn't exposed to the GUI.
+    std::atomic<float>* pEwLocation = nullptr;
+    std::vector<float> layerMag, layerLoc;
+    int locBins = 0;
+    static constexpr float kLocStripH = 40.0f; // px, reserved at the bottom of the display
+
     // brush cursor state (message thread / paint only)
     juce::Point<float> mousePos;
     bool  mouseInside = false;

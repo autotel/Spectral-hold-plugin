@@ -42,6 +42,28 @@ target_link_libraries(SpectralHold PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
 
+# ---- CLAP (agent-wiki/plan-roadmap.md B10) ----
+# Fetches clap-juce-extensions over the network; guarded so a network-less local build can
+# turn it off (-DSPECTRALHOLD_CLAP=OFF).
+#
+# Pinned to a `main` commit, NOT the latest tag (0.26.0): the tag still includes
+# JUCE_LegacyAudioParameter.cpp via the old `juce_audio_processors/format_types/...` path,
+# which doesn't exist in JUCE 8's split (juce_audio_processors_headless/format_types/...) --
+# fails with "No such file or directory" at CLAP-target compile time. `main` (as of the pinned
+# commit) already updated that include path for the new layout; verified building here.
+option(SPECTRALHOLD_CLAP "Build the CLAP plugin target (fetches clap-juce-extensions)" ON)
+if(SPECTRALHOLD_CLAP)
+    include(FetchContent)
+    FetchContent_Declare(clap-juce-extensions
+        GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
+        GIT_TAG        16e9d4ca7b1e86c76e04584b2c08e85a764bcda8) # main, 2026-06-24
+    FetchContent_MakeAvailable(clap-juce-extensions)
+
+    clap_juce_extensions_plugin(TARGET SpectralHold
+        CLAP_ID       "com.autotel.spectralhold"
+        CLAP_FEATURES audio-effect)
+endif()
+
 # ---- offline DSP smoke-test (no host, no GUI) ----
 juce_add_console_app(SpectralHoldTest PRODUCT_NAME "SpectralHoldTest")
 target_sources(SpectralHoldTest PRIVATE Source/test_main.cpp Source/SpectralEngine.cpp Source/PlateReverb.cpp)

@@ -136,17 +136,17 @@ gotchas.md "revFeed was removed"). The fix is a **second, Feed-independent input
 Phases ordered by dependency. B1 is the foundation (B6 and B9 reuse it). Within a phase, order
 is prescriptive.
 
-## B0. Final page grouping (do it in the same commit as B2)
+## B0. Final page grouping
 
 Final `createLayout()` order (IDs unchanged, order only):
 
-- **P1 "Hold"**: feed, loss, ewLocation, dryWet, output, limThreshold, limRelease, **freeze**
+- **P1 "Hold"**: feed, loss, ewLocation, dryWet, output, limThreshold, limRelease
 - **P2 "Shaper"**: shapeAmt, shape, shapeFreq, shapeWidth, shapeCount, shapeLevel, shapeMode, harmonize
 - **P3 "Space"**: harmWidth, harmonic, revMix, revDecay, revDamp, revSize, revPredelay, revMetal
 - **P4 "Perform"**: transpose, spread, phaseNoiseAmt, revFeed *(+ morph if B11 lands)* — partial page, accepted
 
-`phaseNoise` (bool) leaves P1 (replaced by `phaseNoiseAmt` on P4, see B4); `freeze` takes its
-P1 slot — the always-visible page keeps the 8 performance controls.
+`phaseNoise` (bool) leaves P1 (replaced by `phaseNoiseAmt` on P4, see B4). P1 stays a
+7-slot page — no 8th control (see B2, cut).
 
 ## B1. Hold serialization ("the held sound survives save/reopen")
 
@@ -187,22 +187,14 @@ The whole product is the held state; losing it on session reload is the worst ga
    gotchas.md (delete the "*Save sound* was removed / held state is no longer serialised" claims
    — there are two, in the E-W section and parameters.md Notes; this plan supersedes them).
 
-## B2. Freeze (+ the B0 regroup)
+## B2. Freeze — CUT
 
-1. **Param**: `freeze`, `AudioParameterBool`, default off, P1 slot 8 (see B0).
-2. **Engine**: `bool freeze = false;` in `Params`. In `processFrame`:
-   - when `p.freeze`: force the effective `feed = 0`, `trackW = 0` **and** skip decay
-     (`decayL = 1`) — time stops for feed *and* loss. Cleanest cut-in points: compute
-     `const float feed = p.freeze ? 0.0f : p.feed * injScale;`, same for `trackW`, and
-     `const float decayL = p.freeze ? 1.0f : jmax(kDecayFloor, exp(-lossRate * attL));`.
-   - Brush, shaper, harmonize **still run** (freeze stops time, not editing) — document.
-3. **GUI**: latching TextButton "Freeze" at the right end of the persistent row (row1 layout:
-   7 knobs + button). ButtonAttachment. Info:
-   `"Stop time: no input enters, nothing decays. Edits still work."`
-4. **Test**: drive input, set `freeze=true, loss=1.0`, run 200 frames of silence → output frame
-   RMS stays ~constant (no decay, no injection). `freeze=false` default run bit-exact vs before.
-5. **Wiki**: parameters.md (row + new page table), dsp-design.md one line, gotchas.md: "param
-   creation order is the page grouping" bullet — update the page list.
+Implemented, then removed by the user: a dedicated "stop time" button doesn't earn its
+slot next to `feed=0` (which already fully halts injection and tracking) — the only extra
+it bought was pinning `decayL=1` too, not worth a whole P1 param/button for. Reverted in
+full (param, engine branch, GUI button, tests, wiki rows); P1 stays 7 slots (see B0). Do
+not resurrect this without a concrete request — if "stop decay independent of feed" comes
+up again, prefer a cheap `loss=0` toggle over a new param.
 
 ## B3. Transpose + MIDI
 
@@ -256,9 +248,12 @@ Pitch-shift the *held* sound, non-destructively. The phasors free-run, so this i
 4. **Test**: amt=0 bit-exact vs today; amt=1 output differs and stays finite.
 5. **Wiki**: parameters.md (row + note the id swap/migration), gotchas.md short bullet.
 
-## B5. Stereo spread
+## B5. Stereo spread — DONE
 
-Per-bin complementary channel gains on the *output* (momentary, never enters `S`).
+Per-bin complementary channel gains on the *output* (momentary, never enters `S`). Implemented
+as specified below, with one addition: no GUI widget (the plan didn't list one, and the
+utility row was already full with Transpose + Phase Noise) — `spread` is host-automatable /
+generic-editor only for now.
 
 1. **Param**: `spread`, float 0..1, default 0, P4 slot 2.
 2. **Engine**: `Params`: `float spread = 0.0f; int spreadSign = +1;` (processor sets `+1` for
@@ -273,9 +268,11 @@ Per-bin complementary channel gains on the *output* (momentary, never enters `S`
    spread=0 bit-exact.
 4. **Wiki**: parameters.md row, dsp-design.md two lines.
 
-## B6. Undo for destructive edits
+## B6. Undo for destructive edits — DONE
 
-GUI-only; reuses B1's blob machinery.
+GUI-only; reuses B1's blob machinery. Implemented as specified; the width budget for the
+utility row (see B5's note) is now genuinely tight — see the comment in
+`PluginEditor::resized()` before adding another control there.
 
 1. **Processor**: `void snapshotHold();` — under `getCallbackLock()`, `writeHold` both engines
    into a ring `std::array<std::pair<juce::MemoryBlock, juce::MemoryBlock>, 4>` (depth 4) +
@@ -295,7 +292,13 @@ GUI-only; reuses B1's blob machinery.
    restore → spectra match pre-brush (compare `copyDisplay` mags within tolerance).
 6. **Wiki**: gui-display.md (brush section), parameters.md notes.
 
-## B7. Display: stereo + location strip
+## B7. Display: stereo + location strip — DONE
+
+Implemented as specified, plus one addition not in the original bullets: since new DSP
+behavior needs a `test_main.cpp` case per the ground rules at the top of this file,
+`copyLayers` got one (two tones at different E-W locations show up as two populated
+layers). The location strip is channel 0 only (not merged across channels like the main
+view, which the plan didn't ask for) — see gotchas.md.
 
 1. **Stereo**: `getDisplaySnapshot` (`PluginProcessor.cpp:352`) — copy ch 0 as today, then
    `engines[1].copyDisplay` into scratch members; if both succeed, `mag[k] = max(mag0, mag1)`
@@ -314,7 +317,13 @@ GUI-only; reuses B1's blob machinery.
      value (the listener). Repaint with the existing display timer.
 3. **Wiki**: gui-display.md (strip section), architecture.md snapshot list.
 
-## B8. Resizable editor
+## B8. Resizable editor — DONE
+
+Implemented as specified. One clarification worth flagging for future phases (B9's ComboBox
+etc.): this is a uniform visual scale (`AffineTransform`) of the same fixed 860-unit layout,
+**not** a reflow — the utility row's width budget (see its comment in `layoutContent()`) is
+exactly as tight at any window size. If a future phase wants more room in that row, resizing
+doesn't buy any; a P4 tab (mentioned as the alternative since B5) is the actual fix.
 
 1. Wrap all current children in a `content` component sized fixed **860×580** (move every
    `addAndMakeVisible` target into it; the editor's `resized()` becomes:
@@ -329,10 +338,16 @@ GUI-only; reuses B1's blob machinery.
    `getLocalBounds()` of the display inside the transformed content — verify in the standalone).
 5. **Wiki**: gui-display.md note.
 
-## B9. Presets
+## B9. Presets — DONE (infrastructure only, curation still pending)
 
-Infrastructure now, curation later **by ear — the shipped values are placeholders the user
-must tune; say so in the code comment**.
+Implemented as specified, with the preset ComboBox placed at the right end of the **tab
+strip** rather than the utility row — that row's width budget was already spent (see B5/B6's
+notes). One structural addition not spelled out in the bullets below: "any manual knob
+change deselects" requires listening to every parameter, so the editor's existing
+`parameterChanged` (previously just `shapeMode`/`shapeLevel` for B6's undo trigger) is now
+registered for **all** APVTS params via a loop over `proc.apvts.state`, and reused for both
+features — see gotchas.md. Curation later **by ear — the shipped values are placeholders the
+user must tune; say so in the code comment**.
 
 1. `Source/Presets.h`: `struct Preset { const char* name; std::initializer_list<std::pair<const char*, float>> values; }`
    (values in **plain/denormalised** units, applied via
@@ -347,7 +362,19 @@ must tune; say so in the code comment**.
 4. No host program API (`getNumPrograms` stays 1) — this is a GUI convenience.
 5. **Wiki**: parameters.md notes + a "presets are uncurated" flag in gotchas.md until tuned.
 
-## B10. CI + CLAP
+## B10. CI + CLAP — DONE
+
+CI (part 1) turned out to already exist — `.github/workflows/build.yml` predates this plan
+entry entirely (commits `5729849`/`cc385b3`, both older than this file); the plan was
+written without checking. It already matched the spec below almost exactly (Linux/macOS/
+Windows matrix, JUCE 8.0.12 pinned, deps installed, test run on every platform, not just
+Linux). CLAP (part 2) is new: implemented per the spec, with one real deviation — the plan's
+implied "just FetchContent the latest release" doesn't work against JUCE 8 (see
+build-and-test.md's CLAP section for the exact incompatibility and why `main` is pinned
+instead of a tag). Verified building locally (`cmake --build build --target
+SpectralHold_CLAP`, `SPECTRALHOLD_CLAP=ON`) and via the exact CI-equivalent commands
+(separate build dir + explicit `-DJUCE_PATH`). No Linux CLAP host was available to load-test
+it (build-only, per the plan's own fallback clause).
 
 1. `.github/workflows/build.yml`: job `linux`: checkout repo, checkout `juce-framework/JUCE`
    into a sibling dir (**pin the same JUCE major as `../JUCE` — check

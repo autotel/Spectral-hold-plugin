@@ -9,7 +9,11 @@ BUILD_TYPE="${BUILD_TYPE:-Release}"
 JOBS="$(nproc 2>/dev/null || echo 4)"
 
 echo "==> Configuring ($BUILD_TYPE)"
-cmake -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+# CLAP (agent-wiki/plan-roadmap.md B10) is off here: it fetches clap-juce-extensions over
+# the network at configure time regardless of which targets actually get built below, and
+# this script's whole point is a fast/offline local dev loop. Build it explicitly with
+# `cmake --build build --target SpectralHold_CLAP` (network required); CI builds it too.
+cmake -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DSPECTRALHOLD_CLAP=OFF
 
 echo "==> Building"
 cmake --build "$BUILD_DIR" \

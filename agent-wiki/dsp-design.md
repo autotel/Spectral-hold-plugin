@@ -39,10 +39,12 @@ input stops, so the tail sustains at the captured pitch. Leakage bins of one par
 ~the same `omega`, so they stay coherent → smooth continuous tone. JUCE forward transform uses
 `exp(-i…)` and inverse `exp(+i…)`, so the measured advance is used directly as a `+omega` rotation.
 
-**Phase Noise** (boolean): when on, the rotation each frame uses `omega[k] + jitter`, with
-`jitter = ±kPhaseNoise` rad (uniform, `kPhaseNoise = 0.15`) from a per-engine `juce::Random`.
-It's injected into the *frequency tracking* (the rotation), **non-accumulating** (not stored back
-into `omega`), so it adds shimmer/roughness without permanently detuning. RT-safe (no alloc).
+**Phase Noise** (`phaseNoiseAmt`, continuous 0..1, agent-wiki/plan-roadmap.md B4): the rotation
+each frame uses `omega[k] + jitter`, with `jitter = ±kPhaseNoiseMax·amt` rad (uniform,
+`kPhaseNoiseMax = 0.5`) from a per-engine `juce::Random`. It's injected into the *frequency
+tracking* (the rotation), **non-accumulating** (not stored back into `omega`), so it adds
+shimmer/roughness without permanently detuning. RT-safe (no alloc). Was a bool pre-B4 (legacy
+"on" = 0.15 rad, migrated to `amt = 0.3` on old-session load — see `setStateInformation`).
 
 **Feed gates the tracking.** The update is `omega[k] += (measured - omega[k]) · trackW` with
 `trackW = Feed`. This matters: the tracking is a *second* input coupling (the input retunes the
@@ -70,10 +72,6 @@ Let `hop = hopSize`, `sr = sampleRate`.
   does **not** touch the filter compensation invariant below.
 - **Attack was removed.** `Xs[k] = X[k]` unsmoothed each frame; lowering Feed gives the
   same slowed-onset effect the old attack knob did.
-- **Freeze** (`freeze`, agent-wiki/plan-roadmap.md B2) forces `feed=0`, `trackW=0` (no
-  frequency tracking) and `decayL=1` (loss bypassed) for the live input path only — it does
-  not gate the aux/revFeed injection, brush, shaper or harmonize, which keep running under
-  freeze exactly as without it.
 
 ## The spectral shaper
 Replaces the old Filter + Compress with one per-bin signed curve. Math lives in
@@ -240,6 +238,18 @@ original pitch, same frame.
   note* (so releasing an older, already-superseded note can't cancel a newer one). Effective
   `p.transpose = knob + (midiNote>=0 ? midiNote-60 : 0)`, **not clamped** to the knob's
   ±12 st DAW range — playing further from middle C should keep transposing further.
+
+## Stereo spread (agent-wiki/plan-roadmap.md B5)
+Momentary per-bin complementary L/R gain on the **output only** — never touches `S`, so it
+can't drift the held state and costs nothing when `spread=0` (skipped entirely). Deterministic
+hash of the bin index `k` (`u = k·2654435761`, `h = ((u>>16)&0xFFFF)/32767.5 − 1 ∈ [−1,1]`)
+gives a fixed, repeatable L/R pattern rather than noise. Per-channel gain
+`g = sqrt(1 + spreadSign·spread·h)` (argument stays in `[0,2]`, so `gL²+gR² = 2`, equal-power);
+`spreadSign` is `+1`/`−1` set by the processor per engine (channel 0 / 1), and it also forces
+`spread=0` on a mono bus (no second channel to spread against). Applied after `gOut`, before
+the bin is written to `fftData`/`synthScratch` — same insertion point for the transposing and
+non-transposing paths. No dedicated GUI widget yet (host-automatable only) — see
+[parameters.md](parameters.md).
 
 ## East–West location field (continuous tone locations, plan v2 + location layers)
 Every bin/tone carries a **continuous location** `binLoc[k] ∈ [0,1]` alongside `S`/`omega`.

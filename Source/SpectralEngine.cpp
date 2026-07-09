@@ -17,7 +17,8 @@ namespace
                                           // NORMALISED bin magnitude (|S|*2/fftSize, i.e. ~a
                                           // full-scale sine); keeps the bipolar shapes from
                                           // compounding upward without a hard clamp
-    constexpr float kPhaseNoise   = 0.15f; // rad of per-frame phase jitter when noise is on
+    constexpr float kPhaseNoiseMax = 0.5f; // rad of per-frame phase jitter at phaseNoise=1
+                                           // (legacy bool "on" was 0.15 rad == amt 0.3)
     // harmonize
     constexpr float kEntRate   = 0.12f;  // per-frame fraction toward the entrainment target
     constexpr float kHarmRate  = 0.12f;  // per-frame fraction toward the harmonic target
@@ -91,6 +92,8 @@ void SpectralEngine::prepare (double sr, int maxFftOrder)
     mixAbsScratch.assign ((size_t) maxBins, 0.0f);
     dispMag.assign   ((size_t) maxBins, 0.0f);
     dispPhase.assign ((size_t) maxBins, 0.0f);
+    dispLayerMag.assign (layeredSize, 0.0f);
+    dispLayerLoc.assign (layeredSize, 0.0f);
 
     configure (maxFftOrder); // default to max; processor overrides via setOrder()
     reset();
@@ -252,14 +255,9 @@ void SpectralEngine::processFrame (const Params& p)
     // instead of building up by 1/(1-lossDecay). Floored so capture still works at loss=0.
     // (Uses the un-localised rate: freshly-fed bins sit at the listener, att~1.)
     const float injScale = juce::jmax (kInjFloor, 1.0f - lossDecay);
-    // Freeze (agent-wiki/plan-roadmap.md B2) stops time for the LIVE input path: no feed,
-    // no frequency tracking. It does NOT touch the aux (revFeed) path, brush, shaper or
-    // harmonize -- those are separate modules that keep running (freeze stops input, not
-    // editing). decayL below is separately forced to 1 per-layer for the same reason.
-    const float feed    = p.freeze ? 0.0f : p.feed * injScale;
-    const float trackW  = p.freeze ? 0.0f : p.feed; // input's influence on the held
-                                  // *frequency* follows Feed, so feed=0 fully freezes
-                                  // (no input phase leak)
+    const float feed    = p.feed * injScale;
+    const float trackW  = p.feed; // input's influence on the held *frequency* follows
+                                  // Feed, so feed=0 fully freezes (no input phase leak)
     const float refFreq   = (float) sampleRate / (float) fftSize; // freq of bin 1
     const float twoPi     = juce::MathConstants<float>::twoPi;
     constexpr float kTrackThresh = 1.0e-3f;
@@ -403,8 +401,8 @@ void SpectralEngine::processFrame (const Params& p)
 
             // free-run phasor at the tracked frequency (+ optional phase noise)
             float w = omega[idx];
-            if (p.phaseNoise)
-                w += (rng.nextFloat() * 2.0f - 1.0f) * kPhaseNoise;
+            if (p.phaseNoise > 1.0e-4f)
+                w += (rng.nextFloat() * 2.0f - 1.0f) * kPhaseNoiseMax * p.phaseNoise;
             std::complex<float> sk = S[idx] * std::polar (1.0f, w);
 
             if (l == injectLayer)
@@ -440,7 +438,7 @@ void SpectralEngine::processFrame (const Params& p)
 
             // loss is localised: a layer at the knob decays at the set rate; a far one is
             // spared (decay -> 1). att==1 everywhere at knob==0 -> legacy single-buffer rate.
-            const float decayL = p.freeze ? 1.0f : juce::jmax (kDecayFloor, std::exp (-lossRate * attL));
+            const float decayL = juce::jmax (kDecayFloor, std::exp (-lossRate * attL));
             sk *= decayL;
             S[idx] = sk;
 
@@ -450,19 +448,31 @@ void SpectralEngine::processFrame (const Params& p)
                 mixOutT += sk * attL * std::polar (1.0f, transAcc[idx]);
         }
 
+        // Stereo spread (agent-wiki/plan-roadmap.md B5): per-bin complementary channel
+        // gain, deterministic hash of the bin index so L/R vary in a fixed, repeatable
+        // pattern (gL^2+gR^2 = 2, equal-power). Output-only -- never feeds back into S.
+        // Skipped entirely at spread<=0 so the default stays bit-exact.
+        float spreadGain = 1.0f;
+        if (p.spread > 1.0e-4f)
+        {
+            const uint32_t u = (uint32_t) k * 2654435761u;
+            const float h = (float) ((u >> 16) & 0xFFFFu) / 32767.5f - 1.0f; // [-1,1]
+            spreadGain = std::sqrt (juce::jmax (0.0f, 1.0f + (float) p.spreadSign * p.spread * h));
+        }
+
         // momentary-shaped mix of all layers -- the audible output. Non-transposing path
         // is bit-exact unchanged (writes straight into fftData/dispScratch); transposing
         // path accumulates into synthScratch at the shifted bin and is copied out below.
         if (! transposing)
         {
-            const std::complex<float> outBin = mixOut * gOut;
+            const std::complex<float> outBin = mixOut * gOut * spreadGain;
             fftData[(size_t) (2 * k)]     = outBin.real();
             fftData[(size_t) (2 * k + 1)] = outBin.imag();
             dispScratch[(size_t) k] = outBin;
         }
         else
         {
-            const std::complex<float> outBinT = mixOutT * gOut;
+            const std::complex<float> outBinT = mixOutT * gOut * spreadGain;
             const int kPrime = (int) std::lround ((double) k * (double) transRatio);
             if (kPrime >= 1 && kPrime < numBins)
                 synthScratch[(size_t) kPrime] += outBinT;
@@ -488,6 +498,16 @@ void SpectralEngine::processFrame (const Params& p)
             dispMag[(size_t) k]   = std::abs (dispScratch[(size_t) k]) * norm;
             dispPhase[(size_t) k] = std::arg (dispScratch[(size_t) k]);
         }
+
+        // Location strip (agent-wiki/plan-roadmap.md B7): per-layer magnitude/location, same
+        // norm as dispMag so the strip's alpha and the main view's brightness read the same.
+        for (int l = 0; l < kNumLayers; ++l)
+            for (int k = 0; k < numBins; ++k)
+            {
+                const size_t idx = li (l, k);
+                dispLayerMag[idx] = std::abs (S[idx]) * norm;
+                dispLayerLoc[idx] = binLoc[idx];
+            }
     }
 
     // --- synthesis: inverse transform, window, overlap-add
@@ -896,6 +916,27 @@ int SpectralEngine::copyDisplay (std::vector<float>& mag, std::vector<float>& ph
 
     mag.assign   (dispMag.begin(),   dispMag.begin()   + numBins);
     phase.assign (dispPhase.begin(), dispPhase.begin() + numBins);
+    return numBins;
+}
+
+int SpectralEngine::copyLayers (std::vector<float>& mag, std::vector<float>& loc)
+{
+    const juce::ScopedTryLock stl (displayLock);
+    if (! stl.isLocked())
+        return 0;
+
+    // dispLayerMag/dispLayerLoc are stored with stride maxBins (li()'s layout); the caller
+    // gets a tightly-packed stride-numBins copy instead (maxBins >= numBins always, and
+    // differs whenever the FFT order isn't the max).
+    mag.resize ((size_t) kNumLayers * (size_t) numBins);
+    loc.resize ((size_t) kNumLayers * (size_t) numBins);
+    for (int l = 0; l < kNumLayers; ++l)
+    {
+        std::copy (dispLayerMag.begin() + li (l, 0), dispLayerMag.begin() + li (l, 0) + numBins,
+                   mag.begin() + (size_t) l * (size_t) numBins);
+        std::copy (dispLayerLoc.begin() + li (l, 0), dispLayerLoc.begin() + li (l, 0) + numBins,
+                   loc.begin() + (size_t) l * (size_t) numBins);
+    }
     return numBins;
 }
 

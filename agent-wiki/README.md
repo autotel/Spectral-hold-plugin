@@ -38,10 +38,18 @@ held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, 
   location knob** (`exp/eastwest`): the held sound becomes a 2-D `[frequency, location]`
   field of 16 slots blended by a presence-weighted location gain. DSP model, engine
   restructure, tests.
-- [plan-roadmap.md](plan-roadmap.md) — plan (NOT yet implemented) for the roadmap batch:
-  **revFeed done right** (Feed-independent aux path, lands on `main`) and, on `exp/roadmap`,
-  hold serialization, freeze, transpose+MIDI, continuous phase noise, stereo spread, undo,
-  stereo display + E–W location strip, resizable editor, presets, CI+CLAP.
+- [plan-roadmap.md](plan-roadmap.md) — plan (implemented, except B11's optional cut-line
+  items) for the roadmap batch: **revFeed done right** (Feed-independent aux path, landed on
+  `main`) and, on `exp/roadmap`, hold serialization, transpose+MIDI, continuous phase noise,
+  stereo spread, undo, the stereo display + E–W location strip, the resizable editor, preset
+  infrastructure (placeholders, not curated), and CI+CLAP; freeze was implemented then cut
+  (see B2 in the plan — doesn't earn its slot next to `feed=0`).
+- [plan-uifix.md](plan-uifix.md) — plan (NOT yet implemented) for the UI/display fix batch
+  (`exp/uifix`, branched off `exp/roadmap`): split-stereo display (L up / R down from
+  centre, fixes the "ribbed" max-merge), location strip shows live recording/steal state
+  (redundant E–W marker line removed), and a fourth "Perform" tab (Transpose knob + snap
+  toggle `transposeSnap` + glide-time knob `transposeGlide` for portamento on knob moves and
+  MIDI note-ons, Phase Noise knob, Spread knob) keeping P4's host page coherent.
 - [plan-loclayers.md](plan-loclayers.md) — plan (implemented) for **location layers**
   (`exp/loclayers`): K=4 parallel held states so the same frequency can coexist at
   multiple E–W locations — fixes the "re-recording a pitch elsewhere steals/drags it"

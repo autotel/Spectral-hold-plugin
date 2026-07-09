@@ -57,7 +57,15 @@ public:
     void setKeepSound (bool b) { keepSound = b; }
     bool getKeepSound() const  { return keepSound; }
 
-    // Snapshot for the spectrum display (channel 0). Returns numBins or 0.
+    // Editor window scale (agent-wiki/plan-roadmap.md B8), GUI-only, persisted in state
+    // (same pattern as liveMode/uiTab/keepSound). 1.0 = the base 860x580 size; range matches
+    // the editor's setResizeLimits (645..1720 width / 860 = 0.75..2.0).
+    void setEditorScale (float s) { editorScale = juce::jlimit (0.75f, 2.0f, s); }
+    float getEditorScale() const  { return editorScale; }
+
+    // Snapshot for the spectrum display: max(channel 0, channel 1) magnitude, channel 0
+    // phase (agent-wiki/plan-roadmap.md B7). Falls back to channel 0 alone on a mono bus.
+    // Returns numBins or 0.
     int getDisplaySnapshot (std::vector<float>& mag, std::vector<float>& phase,
                             double& sr, int& size);
 
@@ -68,6 +76,13 @@ public:
         return engines[0].copyPeaks (freq, weight, drift);
     }
 
+    // Location strip snapshot (channel 0 only; agent-wiki/plan-roadmap.md B7): per-layer
+    // magnitude/location for the E<->W field. Returns numBins or 0.
+    int getLocationSnapshot (std::vector<float>& mag, std::vector<float>& loc)
+    {
+        return engines[0].copyLayers (mag, loc);
+    }
+
     // GUI brush edit: scale the held spectrum around centreFreqHz (all channels).
     // strength in [-1..+1]: +boost, 0 none, -cut. sigmaOct = brush size (GUI-only).
     void applySpectralBrush (float centreFreqHz, float strength, float sigmaOct)
@@ -75,6 +90,14 @@ public:
         for (auto& e : engines)
             e.queueBrush (centreFreqHz, strength, sigmaOct);
     }
+
+    // Undo for destructive edits (agent-wiki/plan-roadmap.md B6): reuses B1's
+    // writeHold/queueHoldRestore as an in-memory snapshot ring (depth 4, message thread
+    // only). Edit-undo, not time-travel -- harmonize drift, loss decay and normal feeding
+    // are never snapshotted, only explicit triggers (brush stroke start, permanent-shaper
+    // engage) call snapshotHold().
+    void snapshotHold();
+    bool undoHold(); // false when there's nothing to undo
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
@@ -89,8 +112,8 @@ private:
     std::atomic<float>* pDryWet = nullptr;
     std::atomic<float>* pOutput = nullptr;
     std::atomic<float>* pPhaseNoise = nullptr;
-    std::atomic<float>* pFreeze = nullptr; // agent-wiki/plan-roadmap.md B2
     std::atomic<float>* pTranspose = nullptr; // agent-wiki/plan-roadmap.md B3
+    std::atomic<float>* pSpread = nullptr; // agent-wiki/plan-roadmap.md B5
     int midiNote = -1; // last held note-on (monophonic, last-note priority); audio thread only
     std::atomic<float>* pLimThreshold = nullptr;
     std::atomic<float>* pLimRelease   = nullptr;
@@ -125,10 +148,19 @@ private:
     std::atomic<float>* pShapeCount = nullptr;
     std::atomic<float>* pShapeLevel = nullptr;
 
+    // Undo ring (agent-wiki/plan-roadmap.md B6): in-memory writeHold() blobs, one pair
+    // (engine 0, engine 1) per snapshot, message thread only -- never touched by the audio
+    // thread directly (snapshotHold/undoHold both take getCallbackLock() around the parts
+    // that read/apply live engine state, same as B1's session save/restore).
+    std::array<std::pair<juce::MemoryBlock, juce::MemoryBlock>, 4> undoRing;
+    int undoWriteIdx = 0;
+    int undoCount = 0;
+
     // GUI-only switches (persisted manually, see get/setStateInformation)
     bool liveMode = false;
     int  uiTab = 0;
     bool keepSound = true; // agent-wiki/plan-roadmap.md B1: save the held state in the session
+    float editorScale = 1.0f; // agent-wiki/plan-roadmap.md B8: last editor window scale
 
     // slow linked limiter state
     float limEnv  = 0.0f;

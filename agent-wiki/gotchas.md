@@ -64,7 +64,10 @@ Read this before "fixing" something that looks wrong — it probably isn't.
 ## Display
 - `copyDisplay` is non-blocking (try-lock). If the GUI ever looks frozen while audio is
   fine, it's not a deadlock — it just means snapshots are being skipped; check the timer.
-- Shows channel 0 only.
+- Main spectrum is stereo since agent-wiki/plan-roadmap.md B7 (`max` per bin across
+  channels, phase from ch 0; falls back to ch 0 alone on mono/busy). The **location strip**
+  (also B7) is still **channel 0 only** — `copyLayers` isn't merged across channels, unlike
+  the main view. See [gui-display.md](gui-display.md).
 
 ## In-place processing aliasing (was a real silent-output bug)
 - Hosts call `processBlock` with the **same buffer for input and output**. The engine loop
@@ -221,8 +224,50 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   alphabetize or "tidy" `createLayout()` — order is meaningful. Page 2 (shaper) has its own
   7 + `harmonize`'s master amount spilling into slot 8 (not `revMix` — see
   [parameters.md](parameters.md) for the current 4-page table); accepted, not a bug. As of
-  agent-wiki/plan-roadmap.md B0/B2 there's a 4th, partial page too (`revFeed`, `phaseNoise`
-  — interim, final slots land with B3/B4/B5); same rule applies to it.
+  agent-wiki/plan-roadmap.md B0 there's a 4th, partial page too (`transpose`, `spread`,
+  `phaseNoiseAmt`, `revFeed` — 4/8, final target order, accepted partial). P1 is 7 slots,
+  not 8 — see below.
+- **`spread` has no GUI widget.** agent-wiki/plan-roadmap.md B5 didn't specify one, and the
+  utility row is already full (Transpose + Phase Noise sliders). It's a real, automatable
+  DAW param — generic-editor-only until a P4 tab exists. **Not** fixed by B8's resizable
+  editor — that's a uniform visual scale of the same fixed 860-unit layout, it creates no
+  extra logical space at any window size.
+- **Undo (B6) is GUI/message-thread only, never touches the audio thread's own locking.**
+  `snapshotHold()`/`undoHold()` live on `SpectralHoldProcessor`, reuse B1's
+  `writeHold`/`queueHoldRestore`, and store 4 in-memory blob pairs (no gzip/base64 — that's
+  only for the XML session state in get/setStateInformation). Two triggers:
+  `SpectrumDisplay::mouseDown` (before `brushHeld = true`, so it's once per stroke) and the
+  editor's `parameterChanged` on `shapeMode`/`shapeLevel` (see the blanket-listener bullet
+  below), snapshotting on the false→true edge of "armed permanent". That path only fires for
+  GUI-driven changes (`setValueNotifyingHost`) — host automation of those two params calls
+  `setValue` directly and never reaches `AudioProcessorParameter::Listener`, so an automated
+  engage won't snapshot. Accepted: undo is for the interactive editing workflow, not
+  automation.
+- **The editor listens to EVERY APVTS parameter, not a curated few.** `SpectralHoldEditor`'s
+  ctor/dtor walk `proc.apvts.state`'s `PARAM` children (present for every registered param
+  right after APVTS construction — same trick as the B4 migration code) and
+  add/removeParameterListener for each id, rather than hardcoding the list. One
+  `parameterChanged` override now serves two features: B6's shaper-armed-permanent edge
+  detection (`shapeMode`/`shapeLevel` specifically) and B9's preset-deselect-on-edit (any
+  param). If you add a feature that needs to react to "any parameter changed", it goes in
+  this same callback — don't add a second blanket registration loop.
+- **Presets (B9) are uncurated placeholders.** `Source/Presets.h`'s ~8 presets exist to prove
+  the mechanism (ComboBox → reset-to-default → apply overrides → deselect-on-edit), not as
+  finished sound design — the file says so, but don't assume the shipped values are
+  meaningful until someone tunes them by ear. `applyPreset()` resets **every** DAW parameter
+  to its default first (`AudioProcessorParameter::getDefaultValue()`, generic across
+  `AudioParameterFloat`/`Bool`), then overrides only what the preset lists — so "unlisted
+  params reset to default" is real, not just missing coverage.
+- **Freeze was implemented, then cut.** agent-wiki/plan-roadmap.md B2 added a `freeze` bool
+  (stop time: no feed, no tracking, no decay) with its own P1 slot and button. Removed
+  wholesale — `feed=0` already halts injection/tracking, so the extra param only bought
+  pinning decay too, not worth a dedicated control. Don't re-add without a concrete request.
+- **`phaseNoise` (bool) became `phaseNoiseAmt` (float 0..1) in B4.** The id changed, so old
+  automation on the bool is lost; sessions saved with the bool "on" migrate to `amt=0.3` in
+  `setStateInformation` (checked **before** `apvts.replaceState()` — replaceState redirects
+  `state` onto the same reference-counted tree and appends missing PARAM children in place,
+  so checking after it would always see a freshly-defaulted `phaseNoiseAmt` and never detect
+  an old session).
 - **Tabs are view-only.** All modules process regardless of which tab is visible. Display
   overlays (shaper curve, harmonize influence) are **always shown** when their module is
   active, independent of the tab — don't gate them by tab again, it hid armed modifiers
