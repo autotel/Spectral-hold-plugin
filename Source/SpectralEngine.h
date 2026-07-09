@@ -89,6 +89,13 @@ public:
     // mag/loc are resized to kNumLayers*numBins. Returns numBins, or 0 if mid-reconfigure.
     int copyLayers (std::vector<float>& mag, std::vector<float>& loc);
 
+    // Injection snapshot (agent-wiki/plan-uifix.md U2): per-bin record of live-recording
+    // activity in the last processed frame -- where input is landing (loc) and whether it
+    // dragged/stole an existing tone (drag, 1.0) or cleanly claimed a quiet layer (0.0).
+    // strength is 0 for bins with no injection this frame. Plain per-bin (not layered),
+    // resized to numBins. Returns numBins, or 0 if mid-reconfigure.
+    int copyInjection (std::vector<float>& loc, std::vector<float>& strength, std::vector<float>& drag);
+
     // Harmonize influence snapshot: per detected peak, its frequency (Hz), weight (|S|) and
     // current pitch drift (Hz, signed). Returns the peak count (0 when harmonize is off).
     int copyPeaks (std::vector<float>& freq, std::vector<float>& weight, std::vector<float>& drift);
@@ -190,6 +197,13 @@ private:
     // Location strip (agent-wiki/plan-roadmap.md B7): flat, kNumLayers*maxBins, same layout
     // as S/binLoc (li()) -- filled in the same try-locked block as dispMag/dispPhase.
     std::vector<float> dispLayerMag, dispLayerLoc;
+
+    // Injection snapshot (agent-wiki/plan-uifix.md U2): per-frame scratch (plain, maxBins --
+    // NOT layered, injection always targets one resolved layer per bin), written during the
+    // per-bin loop, copied into the guarded disp* members in the same try-locked block as
+    // dispMag/dispPhase/dispLayerMag.
+    std::vector<float> injLocScratch, injStrengthScratch, injDragScratch;
+    std::vector<float> dispInjLoc, dispInjStrength, dispInjDrag;
 
     // brush edit queue (message thread -> audio thread)
     struct BrushOp { float centreFreq; float strength; float sigmaOct; };

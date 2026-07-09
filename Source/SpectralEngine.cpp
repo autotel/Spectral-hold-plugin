@@ -94,6 +94,12 @@ void SpectralEngine::prepare (double sr, int maxFftOrder)
     dispPhase.assign ((size_t) maxBins, 0.0f);
     dispLayerMag.assign (layeredSize, 0.0f);
     dispLayerLoc.assign (layeredSize, 0.0f);
+    injLocScratch.assign      ((size_t) maxBins, 0.0f);
+    injStrengthScratch.assign ((size_t) maxBins, 0.0f);
+    injDragScratch.assign     ((size_t) maxBins, 0.0f);
+    dispInjLoc.assign      ((size_t) maxBins, 0.0f);
+    dispInjStrength.assign ((size_t) maxBins, 0.0f);
+    dispInjDrag.assign     ((size_t) maxBins, 0.0f);
 
     configure (maxFftOrder); // default to max; processor overrides via setOrder()
     reset();
@@ -270,6 +276,12 @@ void SpectralEngine::processFrame (const Params& p)
     if (transposing)
         std::fill (synthScratch.begin(), synthScratch.begin() + numBins, std::complex<float> {});
 
+    // Injection snapshot (agent-wiki/plan-uifix.md U2): per-bin record of live-recording
+    // activity this frame, for the display's location strip (replaces the old, redundant
+    // ewLocation marker line). Only injStrength needs zeroing -- loc/drag are only read by
+    // the GUI where strength > 0.
+    std::fill (injStrengthScratch.begin(), injStrengthScratch.begin() + numBins, 0.0f);
+
     // --- spectral update
     for (int k = 0; k < numBins; ++k)
     {
@@ -422,6 +434,14 @@ void SpectralEngine::processFrame (const Params& p)
                     const float aHeld = std::abs (sk);
                     binLoc[idx] = claimed ? ewL
                                            : (aHeld * locL + aInj * ewL) / (aHeld + aInj);
+
+                    // Injection snapshot (agent-wiki/plan-uifix.md U2): "dragged" = pulled a
+                    // layer that already held audible content -- the steal the user wants
+                    // visible; claiming a quiet layer is the clean record case.
+                    injLocScratch[(size_t) k]      = binLoc[idx];
+                    injStrengthScratch[(size_t) k] = aInj * (2.0f / (float) fftSize);
+                    injDragScratch[(size_t) k]     = (! claimed && aHeld > kClaimClearFloor) ? 1.0f : 0.0f;
+
                     sk += inj;
                     if (auxActive)
                     {
@@ -508,6 +528,13 @@ void SpectralEngine::processFrame (const Params& p)
                 dispLayerMag[idx] = std::abs (S[idx]) * norm;
                 dispLayerLoc[idx] = binLoc[idx];
             }
+
+        // Injection snapshot (agent-wiki/plan-uifix.md U2): copy this frame's recording
+        // activity out of the plain per-frame scratch. Unwritten bins keep injStrengthScratch's
+        // per-frame zero-fill, so dispInjStrength correctly reads 0 where nothing landed.
+        std::copy (injLocScratch.begin(),      injLocScratch.begin() + numBins,      dispInjLoc.begin());
+        std::copy (injStrengthScratch.begin(), injStrengthScratch.begin() + numBins, dispInjStrength.begin());
+        std::copy (injDragScratch.begin(),     injDragScratch.begin() + numBins,     dispInjDrag.begin());
     }
 
     // --- synthesis: inverse transform, window, overlap-add
@@ -937,6 +964,19 @@ int SpectralEngine::copyLayers (std::vector<float>& mag, std::vector<float>& loc
         std::copy (dispLayerLoc.begin() + li (l, 0), dispLayerLoc.begin() + li (l, 0) + numBins,
                    loc.begin() + (size_t) l * (size_t) numBins);
     }
+    return numBins;
+}
+
+int SpectralEngine::copyInjection (std::vector<float>& loc, std::vector<float>& strength,
+                                   std::vector<float>& drag)
+{
+    const juce::ScopedTryLock stl (displayLock);
+    if (! stl.isLocked())
+        return 0;
+
+    loc.assign      (dispInjLoc.begin(),      dispInjLoc.begin()      + numBins);
+    strength.assign (dispInjStrength.begin(), dispInjStrength.begin() + numBins);
+    drag.assign     (dispInjDrag.begin(),     dispInjDrag.begin()     + numBins);
     return numBins;
 }
 

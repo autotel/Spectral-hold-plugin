@@ -1134,6 +1134,105 @@ int main()
         }
     }
 
+    // ew3c-inj) injection snapshot (agent-wiki/plan-uifix.md U2): the strip's live-recording
+    // display data -- copyInjection() reports where input is landing and whether it's
+    // dragging/stealing an existing tone.
+    {
+        // fresh deposit at ewLocation=0.3, checked on the VERY FIRST hop: strength>0 near
+        // the tone's bin, loc~=0.3 (the fed location), drag==0 (aHeld is measured before
+        // this hop's injection, and every layer starts silent after reset()). Must sample
+        // right after exactly one hop -- from the second hop on, the just-recorded energy
+        // itself makes aHeld nonzero, and drag correctly flips to 1 (you're now extending
+        // what you already started recording, which is accurately "dragging" your own
+        // still-growing tone -- not a distinct condition from continuing to record).
+        {
+            SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+            std::vector<float> b (block);
+
+            // setOrder() defers to the next frame boundary -- the very first hop still runs
+            // at prepare()'s order (13, hopSize=2048), and only THEN does applyPendingOrder()
+            // switch to order 12 (which also calls reset(), wiping inRing clean). Flush that
+            // transition with one silent hop at the order-13 hop size first, so the tone we
+            // actually check below lands on a clean, true "first hop" at order 12.
+            {
+                SpectralEngine::Params z; z.feed = 0.0f; z.loss = 0.0f;
+                std::fill (b.begin(), b.end(), 0.0f);
+                const int blocksPerHop13 = (8192 / 4) / block;
+                for (int blk = 0; blk < blocksPerHop13; ++blk)
+                    e.process (b.data(), b.data(), block, z);
+            }
+
+            SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f; d.ewLocation = 0.3f;
+            double ph = 0.0; const double w = 2.0 * M_PI * 1000.0 / sr;
+            std::vector<float> loc, strength, drag;
+            int n = 0;
+            const int blocksPerHop12 = (4096 / 4) / block; // fftSize/kOverlap / block
+            for (int blk = 0; blk < blocksPerHop12; ++blk)
+            {
+                for (int i = 0; i < block; ++i) { b[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
+                e.process (b.data(), b.data(), block, d);
+                n = e.copyInjection (loc, strength, drag);
+            }
+            const int bin1k = ewBin (1000.0f);
+            bool ok = n > 0 && strength[(size_t) bin1k] > 1.0e-4f
+                      && std::abs (loc[(size_t) bin1k] - 0.3f) < 0.05f
+                      && drag[(size_t) bin1k] < 0.5f;
+            printf ("[%s] injection snapshot: fresh deposit (1st hop) strength=%.4f loc=%.3f drag=%.1f\n",
+                    ok ? "PASS" : "FAIL",
+                    n > 0 ? strength[(size_t) bin1k] : -1.0f,
+                    n > 0 ? loc[(size_t) bin1k] : -1.0f,
+                    n > 0 ? drag[(size_t) bin1k] : -1.0f);
+            fails += ok ? 0 : 1;
+        }
+        // near-boundary re-record (same setup as "ew claim boundary (near, drag expected)"
+        // above): re-recording East's own pitch just off-centre drags it -- drag==1 on the
+        // bin that's being dragged.
+        {
+            SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+            double pa = 0.0;
+            ewDeposit (e, 0.0f, 1000.0f, 0.5f, pa); // East, settled
+
+            std::vector<float> b (block);
+            SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f; d.ewLocation = 0.35f; // near
+            double ph = 0.0; const double w = 2.0 * M_PI * 1000.0 / sr;
+            std::vector<float> loc, strength, drag;
+            int n = 0;
+            for (int blk = 0; blk < (int) (0.4 * sr / block); ++blk)
+            {
+                for (int i = 0; i < block; ++i) { b[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
+                e.process (b.data(), b.data(), block, d);
+                n = e.copyInjection (loc, strength, drag);
+            }
+            const int bin1k = ewBin (1000.0f);
+            bool ok = n > 0 && strength[(size_t) bin1k] > 1.0e-4f && drag[(size_t) bin1k] > 0.5f;
+            printf ("[%s] injection snapshot: near re-record drags (drag=%.1f)\n",
+                    ok ? "PASS" : "FAIL", n > 0 ? drag[(size_t) bin1k] : -1.0f);
+            fails += ok ? 0 : 1;
+        }
+        // feed=0: input drives the engine but never gets injected -- strength stays 0
+        // everywhere (the aInj gate in processFrame never opens).
+        {
+            SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+            std::vector<float> b (block);
+            SpectralEngine::Params z; z.feed = 0.0f; z.loss = 0.0f;
+            double ph = 0.0; const double w = 2.0 * M_PI * 1000.0 / sr;
+            std::vector<float> loc, strength, drag;
+            int n = 0;
+            for (int blk = 0; blk < 24; ++blk)
+            {
+                for (int i = 0; i < block; ++i) { b[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
+                e.process (b.data(), b.data(), block, z);
+                n = e.copyInjection (loc, strength, drag);
+            }
+            float maxStrength = 0.0f;
+            for (float s : strength) maxStrength = juce::jmax (maxStrength, s);
+            bool ok = n > 0 && maxStrength == 0.0f;
+            printf ("[%s] injection snapshot: feed=0 -> strength=0 everywhere (max=%.2e)\n",
+                    ok ? "PASS" : "FAIL", maxStrength);
+            fails += ok ? 0 : 1;
+        }
+    }
+
     // ew3d) layer exhaustion: depositing the same pitch at 5 distinct locations (> kNumLayers
     // = 4) must survive -- no NaN, bounded output, the engine steals the quietest layer
     // rather than crashing or corrupting state.

@@ -84,6 +84,14 @@ public:
         return engines[0].copyLayers (mag, loc);
     }
 
+    // Injection snapshot (channel 0 only; agent-wiki/plan-uifix.md U2): where input is
+    // landing this frame and whether it's dragging/stealing an existing tone. Returns
+    // numBins or 0.
+    int getInjectionSnapshot (std::vector<float>& loc, std::vector<float>& strength, std::vector<float>& drag)
+    {
+        return engines[0].copyInjection (loc, strength, drag);
+    }
+
     // GUI brush edit: scale the held spectrum around centreFreqHz (all channels).
     // strength in [-1..+1]: +boost, 0 none, -cut. sigmaOct = brush size (GUI-only).
     void applySpectralBrush (float centreFreqHz, float strength, float sigmaOct)

@@ -68,10 +68,17 @@ private:
     // otherwise. layerMag/layerLoc are flat, layer-major, stride locBins (see
     // SpectralEngine::copyLayers); the layer count is inferred from the ratio, since the
     // engine's kNumLayers isn't exposed to the GUI.
-    std::atomic<float>* pEwLocation = nullptr;
     std::vector<float> layerMag, layerLoc;
     int locBins = 0;
     static constexpr float kLocStripH = 40.0f; // px, reserved at the bottom of the display
+
+    // Injection ticks in the strip (agent-wiki/plan-uifix.md U2): raw per-frame snapshot
+    // (injLoc/injStrength/injDrag) plus a slow-release visual smoothing (smoothInj) so a
+    // brief recording event stays readable instead of flickering for one 30Hz frame.
+    std::vector<float> injLoc, injStrength, injDrag;
+    std::vector<float> smoothInj;      // decayed strength, drives tick alpha
+    std::vector<float> smoothInjLoc;   // latched loc while smoothInj is decaying
+    std::vector<float> smoothInjDrag;  // latched drag while smoothInj is decaying
 
     // brush cursor state (message thread / paint only)
     juce::Point<float> mousePos;

@@ -108,8 +108,7 @@ The E<->W field (agent-wiki/plan-eastwest.md) is otherwise invisible — this ma
   width, unaffected by the `H`/`fullH` split). y: East (`loc=0`) at the strip's bottom, West
   (`loc=1`) at its top, matching `ewLocation`'s 0=East/1=West convention. Per bin/layer with
   `mag > 1e-4`: a small dot, `alpha = sqrt(mag)` (uncalibrated, a legibility choice like the
-  shaper-curve preview, not a precise loudness mapping). A thin horizontal line marks the
-  `ewLocation` knob's current value (the listener position).
+  shaper-curve preview, not a precise loudness mapping).
 - **Hue by layer, not phase**: `copyLayers` doesn't carry phase, so layers are colour-coded
   by index instead, spread across the same `0.48..0.72` hue band the main view's phase-hue
   uses (visually "the same family", not the same mapping).
@@ -118,6 +117,36 @@ The E<->W field (agent-wiki/plan-eastwest.md) is otherwise invisible — this ma
   registers as a near-maximum-cut brush edit at that x. Not fixed; the plan didn't call for a
   separate hit-test policy for the strip and this doesn't break anything, just double-duty.
 
+## Injection ticks — recording/steal state (agent-wiki/plan-uifix.md U2)
+The strip used to also draw a thin horizontal line at the `ewLocation` knob's current value.
+Removed: it was redundant, the knob already shows its own value. In its place, the strip now
+shows something the knob *can't*: where input is landing this instant, and whether it's
+dragging (stealing) an existing held tone or cleanly claiming a quiet one.
+- **Data**: `SpectralEngine::processFrame`'s per-bin injection block already computes
+  everything needed — `aInj` (injection strength), `claimed` (landed on a freshly-claimed
+  quiet layer vs. the nearest-layer drag path), and `aHeld` (the receiving layer's magnitude
+  *before* this hop's injection is added). Per-frame scratch (`injLocScratch`/
+  `injStrengthScratch`/`injDragScratch`, plain per-bin, **not** layered — injection always
+  resolves to one layer per bin) is written inside that block and copied into guarded
+  `dispInj*` members in the same try-locked block as `dispMag`/`dispLayerMag`. New
+  `SpectralEngine::copyInjection()` / `Processor::getInjectionSnapshot()` (channel 0 only,
+  same convention as the strip's dots) follow the exact `copyLayers` pattern.
+- **"Dragged" definition**: `! claimed && aHeld > kClaimClearFloor` — pulled a layer that
+  already held audible content. A **fresh claim is drag=0 for exactly one hop**: the instant
+  a layer is claimed, its `binLoc` snaps to the knob position, so on the *next* hop that same
+  layer is now the nearest one and gets dragged instead of re-claimed — indistinguishable at
+  the engine level from "continuing to record," which is accurate (see the U2 test's long
+  comment in `test_main.cpp` for the full reasoning, and the `setOrder()`-defers-to-next-hop
+  gotcha it had to work around to test hop 1 in isolation).
+- **GUI**: `SpectrumDisplay::timerCallback` fetches into `injLoc/injStrength/injDrag`, then
+  applies a slow-release visual smoothing (`smoothInj[k] = max(strength[k], smoothInj[k] *
+  0.85)` at 30 Hz, ~0.5s to fade) so a brief event stays readable instead of flickering for
+  one frame; `loc`/`drag` are only re-latched when `strength > 0` that frame, so a decaying
+  tick still shows where/what it was. `paint()` draws a short vertical tick per bin with
+  `smoothInj > 0`: **aurora blue** (the house accent, `fromHSV(0.52, 0.55, 1, 1)`) for a
+  clean record, **red-orange** (`fromHSV(0.05, 0.80, 1, 1)`, matching the brush's cut colour)
+  for a drag/steal, alpha `sqrt(smoothInj)`.
+
 ## Tuning knobs (all in SpectrumDisplay.cpp)
 - Frequency range: `kMinHz`, `kMaxHz`.
 - dB window: the `(db + 80)/80` mapping in `levelToBright`.
@@ -125,7 +154,7 @@ The E<->W field (agent-wiki/plan-eastwest.md) is otherwise invisible — this ma
 - Tint: the `hue`/`sat` lines. Keep saturation low to preserve the "very slightly" intent.
 - Smoothing: the `0.6` / `0.15` coefficients in `timerCallback`.
 - Location strip: `kLocStripH` (px), the per-dot `alpha = sqrt(mag)` scale, the per-layer hue
-  spread.
+  spread; injection ticks: the `0.85` smoothing decay, the record/steal hues.
 
 ## Resizable editor (agent-wiki/plan-roadmap.md B8)
 `PluginEditor.{h,cpp}`, not `SpectrumDisplay` — noted here since it changes how everything

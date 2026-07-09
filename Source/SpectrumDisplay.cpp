@@ -13,7 +13,6 @@ SpectrumDisplay::SpectrumDisplay (SpectralHoldProcessor& p) : proc (p)
     pShapeLevel = proc.apvts.getRawParameterValue ("shapeLevel");
     pHarm      = proc.apvts.getRawParameterValue ("harmonize");
     pHarmWidth = proc.apvts.getRawParameterValue ("harmWidth");
-    pEwLocation = proc.apvts.getRawParameterValue ("ewLocation");
     setMouseCursor (juce::MouseCursor::NoCursor); // we draw our own brush cursor
     startTimerHz (30);
 }
@@ -131,6 +130,31 @@ void SpectrumDisplay::timerCallback()
     int nLoc = proc.getLocationSnapshot (layerMag, layerLoc);
     if (nLoc > 0)
         locBins = nLoc;
+
+    // injection ticks (agent-wiki/plan-uifix.md U2): keep last frame if busy, same pattern.
+    // smoothInj decays slowly (0.85/frame @ 30Hz =~ 0.5s to fade) so a brief recording event
+    // stays visible instead of flickering for one frame; loc/drag are only latched when
+    // strength > 0 this frame, so a decaying tick still shows where/what it was.
+    int nInj = proc.getInjectionSnapshot (injLoc, injStrength, injDrag);
+    if (nInj > 0)
+    {
+        if (smoothInj.size() != injStrength.size())
+        {
+            smoothInj.assign (injStrength.size(), 0.0f);
+            smoothInjLoc.assign (injLoc.size(), 0.0f);
+            smoothInjDrag.assign (injDrag.size(), 0.0f);
+        }
+        for (size_t i = 0; i < injStrength.size(); ++i)
+        {
+            smoothInj[i] *= 0.85f;
+            if (injStrength[i] > smoothInj[i])
+            {
+                smoothInj[i]     = injStrength[i];
+                smoothInjLoc[i]  = injLoc[i];
+                smoothInjDrag[i] = injDrag[i];
+            }
+        }
+    }
 
     repaint();
 }
@@ -358,6 +382,8 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     // invisible. Shares the main view's log-frequency x-mapping (xToFreq/freqToX depend
     // only on width, not on the H/fullH split above). y: East (loc=0) at the strip's
     // bottom, West (loc=1) at its top -- matches ewLocation's 0=East/1=West convention.
+    // Dots = held tones (below); ticks = live recording activity (agent-wiki/plan-uifix.md
+    // U2, below the dots) -- no separate knob-position marker, the knob shows its own value.
     if (locBins > 0 && ! layerMag.empty())
     {
         const int layers = (int) (layerMag.size() / (size_t) locBins);
@@ -391,13 +417,26 @@ void SpectrumDisplay::paint (juce::Graphics& g)
             }
         }
 
-        // marker line at the ewLocation knob (the listener position)
-        if (pEwLocation != nullptr)
+        // Injection ticks (agent-wiki/plan-uifix.md U2): replaces the old ewLocation marker
+        // line, which was redundant -- the knob already shows its own value. Ticks show
+        // where input is landing right now: aurora blue = clean record (claimed a quiet
+        // layer or dragged nothing audible), red-orange = dragging/stealing an existing
+        // held tone. Colours match the house accent / brush-cut palette used elsewhere.
+        const auto recordCol = juce::Colour::fromHSV (0.52f, 0.55f, 1.0f, 1.0f);
+        const auto stealCol  = juce::Colour::fromHSV (0.05f, 0.80f, 1.0f, 1.0f);
+        for (size_t k = 1; k < smoothInj.size(); ++k)
         {
-            const float ewL = juce::jlimit (0.0f, 1.0f, pEwLocation->load());
-            const float my  = stripBottom - ewL * kLocStripH;
-            g.setColour (juce::Colours::white.withAlpha (0.4f));
-            g.drawHorizontalLine ((int) my, 0.0f, (float) W);
+            const float s = smoothInj[k];
+            if (s <= 1.0e-4f)
+                continue;
+            const float freq = (float) k * binToHz;
+            if (freq < kMinHz || freq > kMaxHz)
+                continue;
+            const float x = freqToX (freq);
+            const float y = stripBottom - smoothInjLoc[k] * kLocStripH;
+            const float alpha = juce::jlimit (0.0f, 1.0f, std::sqrt (s));
+            g.setColour ((smoothInjDrag[k] > 0.5f ? stealCol : recordCol).withAlpha (alpha));
+            g.drawLine (x, y - 2.5f, x, y + 2.5f, 1.5f);
         }
     }
 }
