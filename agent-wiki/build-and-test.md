@@ -66,9 +66,25 @@ pinned `juce-framework/JUCE@8.0.12` (same major as `../JUCE` locally — re-pin 
 bump JUCE) into sibling dirs, builds VST3 + Standalone + `SpectralHoldTest`, and **runs** the
 test on Linux/macOS ("Run DSP smoke-test (Unix)") and Windows (separate `.exe` step) — not
 build-only anywhere. Linux additionally builds the CLAP target (network-fetches
-`clap-juce-extensions`, same pin as local; see the CLAP section above) and uploads it,
-build-only (no CLAP host in the runner). Artifacts (VST3 all platforms, Standalone per
-platform, CLAP Linux) are uploaded via `actions/upload-artifact`.
+`clap-juce-extensions`, same pin as local; see the CLAP section above), build-only (no CLAP
+host in the runner).
+
+**Artifact packaging**: each platform's outputs are staged into a single
+`autotel-spectral-hold/` folder (`dist/autotel-spectral-hold/` — VST3 always, Standalone
+always, CLAP on Linux only) before upload. `upload-artifact`'s `path:` points at `dist`
+(the folder's *parent*), not the bundle or the staging folder itself — pointing it at a
+`.vst3` bundle directly zips that bundle's *contents* (a bare `Contents/` folder at the zip
+root with no indication what plugin it even is); pointing it at the staging folder itself
+loses the wrapper name the same way. One combined artifact per OS:
+`autotel-spectral-hold-<Linux|macOS|Windows>`.
+
+**Releases**: pushing a tag matching `v*` additionally runs the `release` job (`needs:
+build`, gated on `startsWith(github.ref, 'refs/tags/v')`) — downloads every platform's
+artifact, zips each `autotel-spectral-hold/` folder into
+`autotel-spectral-hold-<platform>.zip`, and publishes a GitHub Release via
+`softprops/action-gh-release` with those zips attached and auto-generated release notes.
+Uses the default `GITHUB_TOKEN` (no PAT needed) — the job has explicit
+`permissions: contents: write` since the repo/org default may not grant that.
 
 ## Notes
 - LTO is on (JUCE recommended flags); link is a little slow. Normal.

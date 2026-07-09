@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -74,36 +75,53 @@ jobs:
           cmake --build plugin/build-clap --config Release --parallel
           --target SpectralHold_CLAP
 
-      - name: Upload CLAP (Linux)
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: SpectralHold-CLAP-Linux
-          path: plugin/build-clap/SpectralHold_artefacts/Release/CLAP/Spectral Hold.clap
+      # Stage everything under a properly-named "autotel-spectral-hold" folder before
+      # upload -- pointing upload-artifact straight at a .vst3 bundle zips its *contents*
+      # (a bare "Contents/" dir at the zip root, no indication what plugin it even is).
+      # Point path at the STAGING dir's parent (dist/) so the zip preserves the
+      # "autotel-spectral-hold/" wrapper folder as its top-level entry.
+      - name: Stage release bundle
+        shell: bash
+        run: |
+          mkdir -p dist/autotel-spectral-hold
+          cp -R "plugin/build/SpectralHold_artefacts/Release/VST3/Spectral Hold.vst3" dist/autotel-spectral-hold/
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cp "plugin/build/SpectralHold_artefacts/Release/Standalone/Spectral Hold" dist/autotel-spectral-hold/
+            cp "plugin/build-clap/SpectralHold_artefacts/Release/CLAP/Spectral Hold.clap" dist/autotel-spectral-hold/
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            cp -R "plugin/build/SpectralHold_artefacts/Release/Standalone/Spectral Hold.app" dist/autotel-spectral-hold/
+          else
+            cp "plugin/build/SpectralHold_artefacts/Release/Standalone/Spectral Hold.exe" dist/autotel-spectral-hold/
+          fi
 
-      - name: Upload VST3
+      - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: SpectralHold-VST3-${{ matrix.name }}
-          path: plugin/build/SpectralHold_artefacts/Release/VST3/Spectral Hold.vst3
+          name: autotel-spectral-hold-${{ matrix.name }}
+          path: dist
 
-      - name: Upload Standalone (Linux)
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+  release:
+    name: Publish GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all platform bundles
+        uses: actions/download-artifact@v4
         with:
-          name: SpectralHold-Standalone-Linux
-          path: plugin/build/SpectralHold_artefacts/Release/Standalone/Spectral Hold
+          path: artifacts
 
-      - name: Upload Standalone (macOS)
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
-        with:
-          name: SpectralHold-Standalone-macOS
-          path: plugin/build/SpectralHold_artefacts/Release/Standalone/Spectral Hold.app
+      - name: Zip each platform bundle
+        run: |
+          cd artifacts
+          for d in autotel-spectral-hold-*; do
+            ( cd "$d" && zip -rq "../${d}.zip" autotel-spectral-hold )
+          done
 
-      - name: Upload Standalone (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+      - name: Create release
+        uses: softprops/action-gh-release@v2
         with:
-          name: SpectralHold-Standalone-Windows
-          path: plugin/build/SpectralHold_artefacts/Release/Standalone/Spectral Hold.exe
+          files: artifacts/*.zip
+          generate_release_notes: true
