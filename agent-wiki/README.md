@@ -44,7 +44,7 @@ held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, 
   stereo spread, undo, the stereo display + E–W location strip, the resizable editor, preset
   infrastructure (placeholders, not curated), and CI+CLAP; freeze was implemented then cut
   (see B2 in the plan — doesn't earn its slot next to `feed=0`).
-- [plan-uifix.md](plan-uifix.md) — plan (NOT yet implemented) for the UI/display fix batch
+- [plan-uifix.md](plan-uifix.md) — plan (implemented) for the UI/display fix batch
   (`exp/uifix`, branched off `exp/roadmap`): split-stereo display (L up / R down from
   centre, fixes the "ribbed" max-merge), location strip shows live recording/steal state
   (redundant E–W marker line removed), and a fourth "Perform" tab (Transpose knob + snap

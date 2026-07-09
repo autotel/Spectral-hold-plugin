@@ -1,9 +1,12 @@
 # Plan: UI/display fix batch (`exp/uifix`) — split-stereo view, strip content, Perform tab
 
-Status: **PLAN — not implemented.** Written for a cheaper model to execute. Read
-[architecture.md](architecture.md), [gui-display.md](gui-display.md), [parameters.md](parameters.md)
-and [gotchas.md](gotchas.md) first. Line numbers below are as of the uncommitted roadmap
-(B4–B10) tree on `exp/roadmap`; re-locate by the quoted code if they drifted.
+Status: **DONE.** Implemented in full (U0–U4) on `exp/uifix`. Line numbers below are as of
+the tree at plan-writing time (post B4–B10, pre-U1); re-locate by the quoted code if they
+drifted — most did, since U1/U2/U3 each touched the same files in sequence. Current behavior
+is documented in [gui-display.md](gui-display.md), [parameters.md](parameters.md),
+[dsp-design.md](dsp-design.md) and [gotchas.md](gotchas.md); read this plan for the
+design rationale (the "ribbed" diagnosis, why the strip's marker line was cut, the
+setOrder()-defers-to-next-frame gotcha the U2 tests had to route around).
 
 User-reported problems this plan fixes, verbatim intent:
 
@@ -33,7 +36,7 @@ User-reported problems this plan fixes, verbatim intent:
 - **No GUI screenshots** — they don't work in this environment (see build-and-test.md).
   Verify layout by summing widths against the container rect; ask the user to eyeball it.
 
-## U0. Branch setup
+## U0. Branch setup — DONE
 
 The `exp/roadmap` working tree currently holds ALL of the B4–B10 roadmap work uncommitted.
 First commit that as-is on `exp/roadmap`:
@@ -46,7 +49,7 @@ First commit that as-is on `exp/roadmap`:
 
 ---
 
-## U1. Split-stereo display (fixes "ribbed")
+## U1. Split-stereo display (fixes "ribbed") — DONE
 
 **Diagnosis** (document it in gui-display.md): B7 merged channels per bin with
 `mag[k] = max(mag0[k], mag1[k])` (`PluginProcessor.cpp:430-436`). Whenever the two channels
@@ -91,7 +94,7 @@ jagged/"ribbed". The fix is to never merge: show each channel in its own half.
    split-view mapping: top half = L, bottom half = R); gotchas.md — replace any mention of
    the max-merge.
 
-## U2. Location strip: remove the redundant line, show recording/steal state
+## U2. Location strip: remove the redundant line, show recording/steal state — DONE
 
 The white marker line at the ewLocation knob value (`SpectrumDisplay.cpp:374-381`) is
 redundant — **delete it**. In its place the strip gets real content: where injection is
@@ -143,7 +146,7 @@ landing right now, and whether it drags (steals) an existing tone.
    live recording, red = stealing/dragging an existing tone; marker line removed as
    redundant); parameters.md E–W row gets one sentence pointing at the strip.
 
-## U3. Perform tab — Transpose knob + snap toggle + glide, Phase Noise knob, Spread knob
+## U3. Perform tab — Transpose knob + snap toggle + glide, Phase Noise knob, Spread knob — DONE
 
 Two new **params**, one new **tab**; utility row sheds its two tiny sliders.
 

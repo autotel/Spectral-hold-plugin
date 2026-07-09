@@ -292,13 +292,20 @@ utility row (see B5's note) is now genuinely tight — see the comment in
    restore → spectra match pre-brush (compare `copyDisplay` mags within tolerance).
 6. **Wiki**: gui-display.md (brush section), parameters.md notes.
 
-## B7. Display: stereo + location strip — DONE
+## B7. Display: stereo + location strip — DONE, later revised by plan-uifix.md U1/U2
 
 Implemented as specified, plus one addition not in the original bullets: since new DSP
 behavior needs a `test_main.cpp` case per the ground rules at the top of this file,
 `copyLayers` got one (two tones at different E-W locations show up as two populated
 layers). The location strip is channel 0 only (not merged across channels like the main
 view, which the plan didn't ask for) — see gotchas.md.
+
+**Superseded**: the stereo `max(mag0, mag1)` merge below (step 1) made the held tone look
+"ribbed" whenever the channels differed — replaced by a split L-up/R-down view in
+agent-wiki/plan-uifix.md U1. The location strip's `ewLocation` marker line (part of step 2)
+was found redundant and replaced with live recording/steal ticks in U2. The bullets below
+describe what was originally built, not the current behavior — see
+[gui-display.md](gui-display.md) for that.
 
 1. **Stereo**: `getDisplaySnapshot` (`PluginProcessor.cpp:352`) — copy ch 0 as today, then
    `engines[1].copyDisplay` into scratch members; if both succeed, `mag[k] = max(mag0, mag1)`

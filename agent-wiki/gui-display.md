@@ -33,6 +33,18 @@ showing. This is deliberate: if the tab gated visibility, a modifier could be ar
 tab you're not looking at with no visual sign of it. The active tab (`uiTab`, persisted
 like `fftOrder`) only controls which knob row is shown — it no longer touches the display.
 
+## Perform tab (agent-wiki/plan-uifix.md U3)
+`PluginEditor.{h,cpp}`, not `SpectrumDisplay` — noted here since it's the fourth tab
+alongside Shaper/Harmonize/Reverb, same radio-toggle pattern (`setActiveTab`, 0..3 now
+instead of 0..2). Holds **Transpose, Glide, Spread, Phase Noise** knobs plus a latching
+**Snap** toggle button (carved from the row's right edge, same pattern the old Freeze
+button used) — all four knobs share the tabbed-row area exactly like the other three tabs'
+knob rows do. Transpose was a utility-row linear slider before U3 despite its large sonic
+impact; Spread had no widget at all since B5. Moving both here (plus Phase Noise, previously
+also a utility-row slider) is what actually freed up the utility row — **not** B8's
+resizable editor, which is a visual scale of the same fixed layout and creates no extra
+logical space at any window size (see "Resizable editor" below).
+
 ## Info bar
 A one-line label at the very bottom of the editor. Every control registers a description
 via `SpectralHoldEditor::setInfo` (shared `MouseListener`, mouseEnter/mouseExit) —
@@ -168,9 +180,9 @@ above is actually presented on screen.
   call), so `content`'s own `resized()` (→ `SpectralHoldEditor::layoutContent()`, the old
   `resized()` body, unchanged) only fires **once**, on the first bounds assignment. Every
   later window resize only touches the transform. Consequence: resizing the window makes
-  everything uniformly bigger/smaller — it does **not** create more logical layout room (the
-  utility row is exactly as cramped at 1720px wide as at 860px; see its width-budget comment
-  in `layoutContent()`).
+  everything uniformly bigger/smaller — it does **not** create more logical layout room at
+  any window size (the actual fix for a cramped row was giving it a tab of its own — see
+  "Perform tab" below).
 - **Mouse coordinates just work.** JUCE maps `MouseEvent` positions through a component's
   `AffineTransform` automatically, so `SpectrumDisplay`'s brush math (`xToFreq`/`yToStrength`,
   driven by its own `getWidth()`/`getHeight()`, fixed at content's logical size) needed zero

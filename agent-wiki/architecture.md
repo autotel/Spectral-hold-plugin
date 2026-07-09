@@ -46,10 +46,13 @@ delayed by the engine's `fftSize` so dry and wet stay time-aligned.
   try-lock, at the end of each frame, all copied out by the editor's 30 Hz timer under that
   same lock (non-blocking on the audio side — it skips the write if the editor holds the
   lock, never the reverse): `dispMag`/`dispPhase` (main spectrum, `copyDisplay`),
-  `dispPeakF/A/D` (harmonize influence, `copyPeaks`), and, since agent-wiki/plan-roadmap.md
-  B7, `dispLayerMag`/`dispLayerLoc` (per-layer magnitude + E<->W location, `copyLayers`,
-  feeds `SpectrumDisplay`'s location strip). `getDisplaySnapshot` additionally merges channel
-  0 and 1 (`max` per bin, phase from ch 0) — see [gui-display.md](gui-display.md).
+  `dispPeakF/A/D` (harmonize influence, `copyPeaks`), `dispLayerMag`/`dispLayerLoc` (B7,
+  per-layer magnitude + E<->W location, `copyLayers`, feeds the location strip's dots), and
+  `dispInjLoc/Strength/Drag` (agent-wiki/plan-uifix.md U2, per-bin live-recording state,
+  `copyInjection`, feeds the strip's ticks). `getDisplaySnapshot` is per-engine (one call per
+  channel) and returns each channel's magnitude/phase **split**, not merged — see
+  [gui-display.md](gui-display.md)'s "Split stereo" section (U1 replaced an earlier
+  `max(mag0,mag1)` merge that caused a visual artifact).
 
 ## Parameters & state
 - DAW-facing params live in `apvts` (see [parameters.md](parameters.md) for the full list).
