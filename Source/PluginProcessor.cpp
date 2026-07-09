@@ -36,6 +36,8 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pOutput = apvts.getRawParameterValue ("output");
     pPhaseNoise = apvts.getRawParameterValue ("phaseNoiseAmt");
     pTranspose  = apvts.getRawParameterValue ("transpose");
+    pTransposeSnap  = apvts.getRawParameterValue ("transposeSnap");
+    pTransposeGlide = apvts.getRawParameterValue ("transposeGlide");
     pSpread     = apvts.getRawParameterValue ("spread");
     pLimThreshold = apvts.getRawParameterValue ("limThreshold");
     pLimRelease   = apvts.getRawParameterValue ("limRelease");
@@ -75,8 +77,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     //                accepted compromise to hit 8/8/8)
     //   P3 "Space":  harmWidth, harmonic, revMix, revDecay, revDamp, revSize,
     //                revPredelay, revMetal
-    //   P4 "Perform" (partial, final target order): transpose, spread, phaseNoiseAmt,
-    //                revFeed (+ morph if B11 lands) -- 4/8, accepted partial page.
+    //   P4 "Perform" (partial, agent-wiki/plan-uifix.md U3): transpose, transposeSnap,
+    //                transposeGlide, spread, phaseNoiseAmt, revFeed (+ morph if B11 lands)
+    //                -- 6/8, accepted partial page. transposeSnap/transposeGlide inserted
+    //                right after transpose so the transpose group stays together.
     // Parameter IDs are unchanged by this grouping -- state restores by ID, not index.
 
     // --- P1: Hold ---
@@ -180,12 +184,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         ParameterID { "revMetal", 1 }, "Reverb Metal",
         NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // less diffusion, no LFO smear
 
-    // --- P4 "Perform" (partial, interim): final target order per agent-wiki/plan-roadmap.md
-    // B0 -- Transpose, Spread, Phase Noise, Reverb Feed (+ morph if B11 lands).
+    // --- P4 "Perform" (partial): Transpose (+Snap, +Glide), Spread, Phase Noise, Reverb
+    // Feed (+ morph if B11 lands) -- agent-wiki/plan-uifix.md U3.
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "transpose", 1 }, "Transpose",
         NormalisableRange<float> (-12.0f, 12.0f), 0.0f,
         AudioParameterFloatAttributes().withLabel ("st")));
+
+    // Transpose snap (agent-wiki/plan-uifix.md U3): quantise the KNOB to whole semitones;
+    // MIDI notes are already discrete regardless. Default off = today's continuous knob.
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "transposeSnap", 1 }, "Transpose Snap", false));
+
+    // Transpose glide (agent-wiki/plan-uifix.md U3): portamento time, knob moves and MIDI
+    // note-ons alike. Default 0 = instant (bit-exact with pre-U3 behaviour).
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "transposeGlide", 1 }, "Transpose Glide",
+        NormalisableRange<float> (0.0f, 2000.0f, 0.0f, 0.35f), 0.0f,
+        AudioParameterFloatAttributes().withLabel ("ms")));
 
     // Stereo spread (agent-wiki/plan-roadmap.md B5): momentary per-bin L/R gain, never
     // touches the held state. spread=0 is a no-op on both mono and stereo buses.
@@ -287,8 +303,14 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     p.phaseNoise = pPhaseNoise->load();
     // note 60 (middle C) = no shift, so playing with no MIDI input matches the knob alone.
     // Not clamped to the knob's +/-12 st DAW range -- playing further from middle C should
-    // keep transposing further, not flatten out at an octave.
-    p.transpose  = pTranspose->load() + (float) (midiNote >= 0 ? midiNote - 60 : 0);
+    // keep transposing further, not flatten out at an octave. Snap (agent-wiki/plan-uifix.md
+    // U3) quantises the KNOB only -- the MIDI offset is already an integer -- and is folded
+    // in BEFORE glide, so a note-on portamentos from the previous effective pitch (knob or
+    // last note) to the new one, snap or no snap.
+    const float tKnob = pTranspose->load();
+    p.transpose = (pTransposeSnap->load() > 0.5f ? (float) juce::roundToInt (tKnob) : tKnob)
+                + (float) (midiNote >= 0 ? midiNote - 60 : 0);
+    p.transposeGlideMs = pTransposeGlide->load();
     p.harmonize  = pHarmonize->load();
     p.harmWidth  = pHarmWidth->load();
     p.harmonic   = pHarmonic->load();
@@ -500,7 +522,7 @@ void SpectralHoldProcessor::setStateInformation (const void* data, int size)
             param->setValueNotifyingHost (0.3f); // 0..1 range, so 0.3 of range == 0.3
 
     setLiveMode    ((bool) tree.getProperty ("liveMode", false));
-    uiTab         = juce::jlimit (0, 2, (int) tree.getProperty ("uiTab", 0));
+    uiTab         = juce::jlimit (0, 3, (int) tree.getProperty ("uiTab", 0)); // 3 = Perform (U3)
     keepSound     = (bool) tree.getProperty ("keepSound", true);
     setEditorScale ((float) tree.getProperty ("editorScale", 1.0f));
 

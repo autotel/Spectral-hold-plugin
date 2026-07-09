@@ -162,6 +162,12 @@ void SpectralEngine::reset()
     for (int l = 0; l < kNumLayers; ++l)
         std::copy (expectedAdv.begin(), expectedAdv.begin() + maxBins, omega.begin() + (long) li (l, 0));
     inWrite = outRead = hopCount = 0;
+
+    // Transpose glide (agent-wiki/plan-uifix.md U3): force the lazy-init in processFrame()
+    // to re-snap transposeSmoothed to the current target next frame, rather than gliding
+    // from wherever it was (or from 0) -- a reset() mid-glide shouldn't make the NEXT note
+    // audibly glide from the old target.
+    transposeSmoothInit = false;
 }
 
 void SpectralEngine::process (const float* in, const float* aux, float* out, int numSamples, const Params& p)
@@ -271,8 +277,17 @@ void SpectralEngine::processFrame (const Params& p)
     // Transpose (agent-wiki/plan-roadmap.md B3): pitch-shift the OUTPUT of the held sound
     // without touching the held state (S/omega stay untouched -- non-destructive). See the
     // per-layer transAcc accumulation below and the bin remap at the end of this loop.
-    const float transRatio = std::exp2 (p.transpose / 12.0f);
-    const bool  transposing = std::abs (p.transpose) > 1.0e-3f;
+    // Glide (agent-wiki/plan-uifix.md U3): transposeSmoothed one-pole-follows p.transpose
+    // per hop; lazy-init snaps it to the target on the first frame (after prepare()/reset())
+    // instead of gliding from 0. At transposeGlideMs=0, glideCoef=1 every frame so
+    // transposeSmoothed == p.transpose always -- bit-exact with pre-U3 behaviour.
+    if (! transposeSmoothInit) { transposeSmoothed = p.transpose; transposeSmoothInit = true; }
+    const float glideCoef = p.transposeGlideMs > 1.0e-3f
+        ? 1.0f - std::exp (-(float) hopSize / ((float) sampleRate * p.transposeGlideMs * 0.001f))
+        : 1.0f;
+    transposeSmoothed += (p.transpose - transposeSmoothed) * glideCoef;
+    const float transRatio = std::exp2 (transposeSmoothed / 12.0f);
+    const bool  transposing = std::abs (transposeSmoothed) > 1.0e-3f;
     if (transposing)
         std::fill (synthScratch.begin(), synthScratch.begin() + numBins, std::complex<float> {});
 

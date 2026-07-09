@@ -259,6 +259,163 @@ int main()
         fails += ok ? 0 : 1;
     }
 
+    // 4e-glide) transpose glide (agent-wiki/plan-uifix.md U3): one-pole smoothing of the
+    // transpose target, per hop.
+    {
+        // glide=0 bit-exact vs default (same pattern as the B5 spread bit-exact test):
+        // transposeGlideMs left at its default (0) must behave identically to explicitly
+        // setting it to 0 -- glideCoef=1 every frame either way.
+        {
+            SpectralEngine e1; e1.prepare (sr, 13); e1.setOrder (12); e1.reset();
+            SpectralEngine e2; e2.prepare (sr, 13); e2.setOrder (12); e2.reset();
+            SpectralEngine::Params p1; p1.feed = 0.6f; p1.loss = 0.2f; p1.transpose = 7.0f; p1.transposeGlideMs = 0.0f;
+            SpectralEngine::Params p2 = p1; // transposeGlideMs left at its default (0.0f)
+            juce::Random rng (777);
+            std::vector<float> in1 (block), in2 (block), out1 (block), out2 (block);
+            float maxErr = 0.0f;
+            for (int b = 0; b < 40; ++b)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    const float s = rng.nextFloat() * 1.0f - 0.5f;
+                    in1[(size_t) i] = s; in2[(size_t) i] = s;
+                }
+                e1.process (in1.data(), out1.data(), block, p1);
+                e2.process (in2.data(), out2.data(), block, p2);
+                for (int i = 0; i < block; ++i)
+                    maxErr = juce::jmax (maxErr, std::abs (out1[(size_t) i] - out2[(size_t) i]));
+            }
+            bool ok = maxErr == 0.0f;
+            printf ("[%s] transpose glide=0 bit-exact vs default: maxErr=%.2e\n", ok ? "PASS" : "FAIL", maxErr);
+            fails += ok ? 0 : 1;
+        }
+
+        // glide smooths a step: hold a 440Hz tone, then jump transpose 0->+12 with
+        // glideMs=200. Shortly after the jump, energy should show up at an INTERMEDIATE
+        // bin (neither 440Hz's nor 880Hz's) -- proof the ratio is sweeping, not jumping.
+        // Well after glideMs has elapsed (~5x, to clear the one-pole's tail), it settles at
+        // ~880Hz same as the instant (glideMs=0) case.
+        {
+            SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+            SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f;
+            double ph = 0.0; const double w = 2.0 * M_PI * 440.0 / sr;
+            std::vector<float> buf (block);
+            for (int b = 0; b < 50; ++b)
+            {
+                for (int i = 0; i < block; ++i) { buf[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
+                e.process (buf.data(), buf.data(), block, d);
+            }
+
+            const float refFreq = (float) sr / 4096.0f;
+            const int bin440 = (int) std::lround (440.0f / refFreq);
+            const int bin880 = (int) std::lround ((double) bin440 * 2.0);
+
+            std::vector<float> m, ph2;
+            std::fill (buf.begin(), buf.end(), 0.0f);
+            e.process (buf.data(), buf.data(), block, d); // one more (params unchanged) to read a clean snapshot
+            e.copyDisplay (m, ph2);
+            const float base440 = m[(size_t) bin440];
+
+            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.transpose = 12.0f; h.transposeGlideMs = 200.0f;
+            const int hopSamples = 4096 / 4; // fftSize/kOverlap, order 12
+
+            // ~7 hops in (~150ms @ 48kHz): with the one-pole's per-hop coefficient at
+            // glideMs=200, transposeSmoothed is partway to +12st -- neither at 440 nor at
+            // 880Hz. The remap snaps each source bin to ONE destination bin per hop
+            // (kPrime = round(k*ratio)), not a smooth spread, so pinpointing an exact
+            // "midpoint" bin is fragile (off-by-one rounding at any given hop misses it
+            // entirely); scan the whole open range strictly between 440 and 880Hz's bins
+            // for ANY energy instead -- robust to exactly which bin the current ratio lands on.
+            for (int hop = 0; hop < 7; ++hop)
+                for (int off = 0; off < hopSamples; off += block)
+                    e.process (buf.data(), buf.data(), block, h);
+            e.copyDisplay (m, ph2);
+            float midDuring = 0.0f;
+            for (int k = bin440 + 1; k < bin880; ++k)
+                midDuring = juce::jmax (midDuring, m[(size_t) k]);
+            const float m440During = m[(size_t) bin440];
+
+            // ~47 more hops (~1s total, >>5x glideMs -- the one-pole is fully settled).
+            for (int hop = 0; hop < 47; ++hop)
+                for (int off = 0; off < hopSamples; off += block)
+                    e.process (buf.data(), buf.data(), block, h);
+            e.copyDisplay (m, ph2);
+            const float settled880 = m[(size_t) bin880];
+            const float settled440 = m[(size_t) bin440];
+
+            bool ok = midDuring > base440 * 0.1f            // partway: real energy landed strictly between the two bins
+                      && m440During < base440 * 0.5f         // partway: has already moved off 440's own bin
+                      && settled880 > settled440 * 5.0f;      // settled: clearly at 880, not 440
+            printf ("[%s] transpose glide smooths a step: base440=%.4f mid(during)=%.4f 440(during)=%.4f 880(settled)=%.4f 440(settled)=%.4f\n",
+                    ok ? "PASS" : "FAIL", base440, midDuring, m440During, settled880, settled440);
+            fails += ok ? 0 : 1;
+
+            // control: glideMs=0 lands at ~880Hz within the first hop (no glide needed).
+            SpectralEngine e0; e0.prepare (sr, 13); e0.setOrder (12); e0.reset();
+            double ph0 = 0.0;
+            for (int b = 0; b < 50; ++b)
+            {
+                for (int i = 0; i < block; ++i) { buf[(size_t) i] = 0.5f * (float) std::sin (ph0); ph0 += w; }
+                e0.process (buf.data(), buf.data(), block, d);
+            }
+            SpectralEngine::Params h0i = h; h0i.transposeGlideMs = 0.0f;
+            std::fill (buf.begin(), buf.end(), 0.0f);
+            for (int off = 0; off < hopSamples; off += block)
+                e0.process (buf.data(), buf.data(), block, h0i);
+            std::vector<float> m0, ph0v;
+            e0.copyDisplay (m0, ph0v);
+            bool okControl = m0[(size_t) bin880] > m0[(size_t) bin440] * 5.0f;
+            printf ("[%s] transpose glide=0 control: lands at 880Hz within the first hop (880=%.4f 440=%.4f)\n",
+                    okControl ? "PASS" : "FAIL", m0[(size_t) bin880], m0[(size_t) bin440]);
+            fails += okControl ? 0 : 1;
+        }
+
+        // reset() mid-glide doesn't glide the next note from 0 st: start a glide toward
+        // +12, reset() partway through, then hold a fresh 440Hz tone at transpose=0 with
+        // glideMs=200 still set -- output should read ~440Hz immediately (lazy-init
+        // re-snaps transposeSmoothed to the new target), not still mid-glide from +12.
+        {
+            SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+            SpectralEngine::Params d; d.feed = 1.0f; d.loss = 0.0f;
+            double ph = 0.0; const double w = 2.0 * M_PI * 440.0 / sr;
+            std::vector<float> buf (block);
+            for (int b = 0; b < 50; ++b)
+            {
+                for (int i = 0; i < block; ++i) { buf[(size_t) i] = 0.5f * (float) std::sin (ph); ph += w; }
+                e.process (buf.data(), buf.data(), block, d);
+            }
+
+            SpectralEngine::Params h; h.feed = 0.0f; h.loss = 0.0f; h.transpose = 12.0f; h.transposeGlideMs = 200.0f;
+            std::fill (buf.begin(), buf.end(), 0.0f);
+            const int hopSamples = 4096 / 4;
+            for (int off = 0; off < hopSamples; off += block) // one hop into the glide
+                e.process (buf.data(), buf.data(), block, h);
+
+            e.reset(); // mid-glide
+
+            // re-deposit a fresh 440Hz tone, then hold it with transpose=0, glideMs still 200
+            double ph2v = 0.0;
+            for (int b = 0; b < 50; ++b)
+            {
+                for (int i = 0; i < block; ++i) { buf[(size_t) i] = 0.5f * (float) std::sin (ph2v); ph2v += w; }
+                e.process (buf.data(), buf.data(), block, d);
+            }
+            SpectralEngine::Params h2; h2.feed = 0.0f; h2.loss = 0.0f; h2.transpose = 0.0f; h2.transposeGlideMs = 200.0f;
+            std::fill (buf.begin(), buf.end(), 0.0f);
+            for (int off = 0; off < hopSamples; off += block) // exactly one hop -- lazy-init snaps here
+                e.process (buf.data(), buf.data(), block, h2);
+
+            const float refFreq = (float) sr / 4096.0f;
+            const int bin440 = (int) std::lround (440.0f / refFreq);
+            std::vector<float> m, ph3;
+            e.copyDisplay (m, ph3);
+            bool ok = m[(size_t) bin440] > 1.0e-3f;
+            printf ("[%s] reset() mid-glide: next note reads ~440Hz immediately (440=%.4f)\n",
+                    ok ? "PASS" : "FAIL", m[(size_t) bin440]);
+            fails += ok ? 0 : 1;
+        }
+    }
+
     // 4f) stereo spread (agent-wiki/plan-roadmap.md B5): momentary per-bin L/R gain, never
     // touches the held state. At spread=1 the two channels (signs +1/-1) differ, but total
     // energy L^2+R^2 stays close to 2x a single spread=0 channel (equal-power).

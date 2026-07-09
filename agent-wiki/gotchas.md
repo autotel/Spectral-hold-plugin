@@ -224,14 +224,17 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   alphabetize or "tidy" `createLayout()` — order is meaningful. Page 2 (shaper) has its own
   7 + `harmonize`'s master amount spilling into slot 8 (not `revMix` — see
   [parameters.md](parameters.md) for the current 4-page table); accepted, not a bug. As of
-  agent-wiki/plan-roadmap.md B0 there's a 4th, partial page too (`transpose`, `spread`,
-  `phaseNoiseAmt`, `revFeed` — 4/8, final target order, accepted partial). P1 is 7 slots,
-  not 8 — see below.
-- **`spread` has no GUI widget.** agent-wiki/plan-roadmap.md B5 didn't specify one, and the
-  utility row is already full (Transpose + Phase Noise sliders). It's a real, automatable
-  DAW param — generic-editor-only until a P4 tab exists. **Not** fixed by B8's resizable
-  editor — that's a uniform visual scale of the same fixed 860-unit layout, it creates no
-  extra logical space at any window size.
+  agent-wiki/plan-uifix.md U3 there's a 4th, partial page too (`transpose`, `transposeSnap`,
+  `transposeGlide`, `spread`, `phaseNoiseAmt`, `revFeed` — 6/8, accepted partial).
+  `transposeSnap`/`transposeGlide` are inserted right after `transpose`, not appended at the
+  end, specifically to keep the transpose group together. P1 is 7 slots, not 8 — see below.
+- **`spread` and `transpose` moved off the utility row onto a 4th "Perform" tab**
+  (agent-wiki/plan-uifix.md U3). `spread` had no widget at all from B5 until U3 — the plan
+  never specified one. `transpose` was a utility-row linear slider despite its large sonic
+  impact; now a knob, same tab, with a Snap toggle and a Glide knob alongside it. **B8's
+  resizable editor did NOT create this room** — it's a uniform visual scale of the same
+  fixed 860-unit layout, no extra logical space at any window size; the actual fix was
+  giving Perform its own tab, exactly the escape hatch B5's/B6's gotchas already pointed at.
 - **Undo (B6) is GUI/message-thread only, never touches the audio thread's own locking.**
   `snapshotHold()`/`undoHold()` live on `SpectralHoldProcessor`, reuse B1's
   `writeHold`/`queueHoldRestore`, and store 4 in-memory blob pairs (no gzip/base64 — that's

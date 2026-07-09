@@ -52,6 +52,11 @@ public:
         // sound without touching the held state (non-destructive). See dsp-design.md.
         float transpose = 0.0f; // -12..+12 semitones
 
+        // Transpose glide (agent-wiki/plan-uifix.md U3): portamento time for pitch changes
+        // (knob moves and MIDI note-ons alike), applied to transpose only. 0 = instant
+        // (bit-exact with pre-U3 behaviour). See dsp-design.md.
+        float transposeGlideMs = 0.0f;
+
         // Stereo spread (agent-wiki/plan-roadmap.md B5): per-bin complementary channel gain
         // on the OUTPUT only (never enters S). spreadSign is +1 for one channel, -1 for the
         // other (processor sets it per-engine); the processor also forces spread=0 on a
@@ -178,6 +183,12 @@ private:
     // without touching S/omega; synthScratch is the per-frame remapped-bin output buffer.
     std::vector<float> transAcc;                    // flat, kNumLayers*maxBins -- see li()
     std::vector<std::complex<float>> synthScratch;   // length maxBins
+
+    // Transpose glide (agent-wiki/plan-uifix.md U3): one-pole smoothing of p.transpose,
+    // per-hop. Lazy-init snaps to the current target on the first frame after prepare()/
+    // reset() instead of gliding from 0 st.
+    float transposeSmoothed = 0.0f;
+    bool  transposeSmoothInit = false;
 
     // harmonize peak scratch (preallocated; capped at kMaxPeaks)
     static constexpr int kMaxPeaks = 128;

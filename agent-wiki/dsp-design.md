@@ -216,8 +216,11 @@ Pitch-shifts the **output** of the held sound; `S`/`omega` (the held state) are 
 touched, so it's fully non-destructive — turning Transpose back to 0 instantly recovers the
 original pitch, same frame.
 
-- `transRatio = 2^(transpose/12)`; `transposing = |transpose| > 1e-3` gates the whole path
-  (default costs one branch, no extra work).
+- `transRatio = 2^(transposeSmoothed/12)`; `transposing = |transposeSmoothed| > 1e-3` gates
+  the whole path (default costs one branch, no extra work). `transposeSmoothed` is `p.transpose`
+  after Glide's one-pole smoothing (agent-wiki/plan-uifix.md U3, below) — at the default
+  `transposeGlideMs = 0` the smoothing is a no-op every frame, so `transposeSmoothed ==
+  p.transpose` always and this is bit-exact with pre-U3 behaviour.
 - **Per-layer phase accumulator**, not a resample: each layer/bin keeps `transAcc[idx]`, an
   *extra* phase offset advanced only while transposing:
   `transAcc[idx] += omega[idx]·(transRatio − 1)`, wrapped to `[-π,π]`. The layer's
@@ -236,8 +239,39 @@ original pitch, same frame.
 - **MIDI** (`PluginProcessor`): monophonic, last-note priority. `midiNote` (plain member,
   audio-thread only) is set on note-on, cleared on a note-off *matching the currently held
   note* (so releasing an older, already-superseded note can't cancel a newer one). Effective
-  `p.transpose = knob + (midiNote>=0 ? midiNote-60 : 0)`, **not clamped** to the knob's
-  ±12 st DAW range — playing further from middle C should keep transposing further.
+  `p.transpose = (snap ? round(knob) : knob) + (midiNote>=0 ? midiNote-60 : 0)`, **not
+  clamped** to the knob's ±12 st DAW range — playing further from middle C should keep
+  transposing further. Snap (below) only rounds the knob; the MIDI offset is already an
+  integer semitone count.
+
+**Snap** (`transposeSnap`, agent-wiki/plan-uifix.md U3): a processor-side bool that
+quantises the transpose **knob** to whole semitones before the MIDI offset is added — a
+one-line `juce::roundToInt` in `processBlock`, no engine involvement. Default off = today's
+continuous knob.
+
+**Glide** (`transposeGlide`, agent-wiki/plan-uifix.md U3): portamento time (ms) for pitch
+changes, applied to the *combined* snap+MIDI target — so a note-on glides from whatever the
+previous effective pitch was (knob or last note), snap or no snap. Lives in the **engine**,
+not the processor, so it's sample-accurate at frame granularity and — like Phase Noise's
+`juce::Random` — naturally per-channel (harmless; both channels glide identically since they
+share `p`).
+- **State**: `float transposeSmoothed; bool transposeSmoothInit;` per engine.
+- **Lazy init**: on the first `processFrame` after `prepare()`/`reset()`
+  (`transposeSmoothInit == false`), `transposeSmoothed` snaps directly to `p.transpose` —
+  no glide-from-zero on startup or after a reset. `reset()` only clears the init flag, not
+  `transposeSmoothed` itself, specifically so a `reset()` fired *mid-glide* doesn't make the
+  **next** note glide from the old, now-irrelevant target — the flag forces a fresh snap to
+  whatever the next frame's target actually is.
+- **Per-hop one-pole**, computed *before* `transRatio`:
+  ```
+  glideCoef = transposeGlideMs > 1e-3 ? 1 - exp(-hopSize / (sampleRate * transposeGlideMs * 0.001)) : 1
+  transposeSmoothed += (p.transpose - transposeSmoothed) * glideCoef
+  ```
+  At `transposeGlideMs = 0`, `glideCoef = 1` unconditionally, so `transposeSmoothed` snaps to
+  `p.transpose` every single frame — algebraically identical to reading `p.transpose`
+  directly, hence bit-exact with pre-U3 behaviour at the default.
+- `transposeSmoothed` (not `p.transpose`) feeds `transRatio`/`transposing` and nothing else
+  reads `p.transpose` inside `processFrame` — one substitution point.
 
 ## Stereo spread (agent-wiki/plan-roadmap.md B5)
 Momentary per-bin complementary L/R gain on the **output only** — never touches `S`, so it
@@ -248,8 +282,8 @@ gives a fixed, repeatable L/R pattern rather than noise. Per-channel gain
 `spreadSign` is `+1`/`−1` set by the processor per engine (channel 0 / 1), and it also forces
 `spread=0` on a mono bus (no second channel to spread against). Applied after `gOut`, before
 the bin is written to `fftData`/`synthScratch` — same insertion point for the transposing and
-non-transposing paths. No dedicated GUI widget yet (host-automatable only) — see
-[parameters.md](parameters.md).
+non-transposing paths. GUI knob on the Perform tab (agent-wiki/plan-uifix.md U3; had no
+widget at all from B5 until then) — see [parameters.md](parameters.md).
 
 ## East–West location field (continuous tone locations, plan v2 + location layers)
 Every bin/tone carries a **continuous location** `binLoc[k] ∈ [0,1]` alongside `S`/`omega`.

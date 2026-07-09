@@ -45,7 +45,7 @@ private:
     };
 
     void setupKnob (Knob&, const juce::String& paramId, const juce::String& text);
-    void setActiveTab (int tabIndex); // 0 = Shaper, 1 = Harmonize, 2 = Reverb
+    void setActiveTab (int tabIndex); // 0 = Shaper, 1 = Harmonize, 2 = Reverb, 3 = Perform
     void setInfo (juce::Component&, const juce::String& description);
 
     // Resizable editor (agent-wiki/plan-roadmap.md B8): all children live inside `content`,
@@ -77,7 +77,14 @@ private:
     Knob harmonize, harmWidth, harmonic;
     Knob revMix, revDecay, revDamp, revSize, revPredelay, revMetal, revFeed;
 
-    juce::TextButton shaperTab { "Shaper" }, harmonizeTab { "Harmonize" }, reverbTab { "Reverb" };
+    // Perform tab (agent-wiki/plan-uifix.md U3): Transpose (+Snap toggle, +Glide), Spread,
+    // Phase Noise -- replaces the old utility-row Transpose/Phase Noise sliders.
+    Knob transpose, transposeGlide, spread, phaseNoise;
+    juce::TextButton snapButton { "Snap" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> snapAttach;
+
+    juce::TextButton shaperTab { "Shaper" }, harmonizeTab { "Harmonize" }, reverbTab { "Reverb" },
+                      performTab { "Perform" };
     int activeTab = 0;
 
     // Preset picker (agent-wiki/plan-roadmap.md B9): lives at the right end of the tab
@@ -87,12 +94,6 @@ private:
     juce::Label    sizeLabel;
     juce::ComboBox sizeBox;
 
-    // Phase Noise (agent-wiki/plan-roadmap.md B4): continuous amount, utility-row linear
-    // slider like Transpose below -- P4 "Perform" has no tab of its own yet.
-    juce::Label  phaseNoiseLabel;
-    juce::Slider phaseNoiseSlider;
-    std::unique_ptr<SliderAttach> phaseNoiseAttach;
-
     // GUI-only switches (persisted by the processor, not DAW parameters)
     juce::ToggleButton liveButton { "Live (0 PDC)" };
     juce::ToggleButton keepButton { "Keep" }; // agent-wiki/plan-roadmap.md B1: save held state
@@ -100,13 +101,6 @@ private:
 
     juce::Label  brushLabel;
     juce::Slider brushSizeSlider; // GUI-only brush size, not a DAW parameter
-
-    // Transpose (agent-wiki/plan-roadmap.md B3): utility-row linear slider (not a rotary
-    // Knob) since it doesn't yet have a tab of its own -- P4 "Perform" is DAW-page-only
-    // until B4/B5 fill out a fourth GUI tab.
-    juce::Label  transposeLabel;
-    juce::Slider transposeSlider;
-    std::unique_ptr<SliderAttach> transposeAttach;
 
     // Ableton-style info bar: hovering any control shows its one-line description here.
     struct InfoListener : juce::MouseListener

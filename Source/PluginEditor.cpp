@@ -37,8 +37,25 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (revMetal,    "revMetal",    "Metal");
     setupKnob (revFeed,     "revFeed",     "Feed");
 
+    // Perform tab (agent-wiki/plan-uifix.md U3): Transpose was a tiny utility-row slider
+    // despite its big sonic impact -- now a knob, with a Snap toggle (discrete semitones)
+    // and a Glide knob (portamento, knob moves and MIDI note-ons alike). Spread finally
+    // gets a widget (it had none since B5 -- the utility row was already full). Phase Noise
+    // moves here too, off the utility row.
+    setupKnob (transpose,      "transpose",      "Transpose");
+    transpose.slider.setTextValueSuffix (" st");
+    setupKnob (transposeGlide, "transposeGlide", "Glide");
+    transposeGlide.slider.setTextValueSuffix (" ms");
+    setupKnob (spread,         "spread",         "Spread");
+    setupKnob (phaseNoise,     "phaseNoiseAmt",  "Phase Noise");
+
+    snapButton.setClickingTogglesState (true);
+    content.addAndMakeVisible (snapButton);
+    snapAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        proc.apvts, "transposeSnap", snapButton);
+
     // tab strip (radio-style toggles switching the visible knob row)
-    for (auto* t : { &shaperTab, &harmonizeTab, &reverbTab })
+    for (auto* t : { &shaperTab, &harmonizeTab, &reverbTab, &performTab })
     {
         t->setClickingTogglesState (true);
         t->setRadioGroupId (1001);
@@ -47,6 +64,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     shaperTab.onClick    = [this] { if (shaperTab.getToggleState())    setActiveTab (0); };
     harmonizeTab.onClick = [this] { if (harmonizeTab.getToggleState()) setActiveTab (1); };
     reverbTab.onClick    = [this] { if (reverbTab.getToggleState())    setActiveTab (2); };
+    performTab.onClick   = [this] { if (performTab.getToggleState())   setActiveTab (3); };
 
     // FFT size: GUI-only (not a DAW parameter).
     content.addAndMakeVisible (sizeBox);
@@ -67,22 +85,6 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     sizeLabel.setJustificationType (juce::Justification::centredRight);
     content.addAndMakeVisible (sizeLabel);
 
-    // Phase Noise (agent-wiki/plan-roadmap.md B4): a DAW param, attached like Transpose,
-    // laid out as a utility-row linear slider (P4 "Perform" has no tab yet).
-    phaseNoiseSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    phaseNoiseSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 48, 16);
-    content.addAndMakeVisible (phaseNoiseSlider);
-    phaseNoiseAttach = std::make_unique<SliderAttach> (proc.apvts, "phaseNoiseAmt", phaseNoiseSlider);
-
-    phaseNoiseLabel.setText ("Phase Noise", juce::dontSendNotification);
-    phaseNoiseLabel.setJustificationType (juce::Justification::centredRight);
-    content.addAndMakeVisible (phaseNoiseLabel);
-
-    // Note: `spread` (agent-wiki/plan-roadmap.md B5) has no dedicated widget -- the
-    // utility row is already full (Transpose + Phase Noise). Host-automatable / generic-
-    // editor only until a P4 tab makes room -- B8's resizable editor is a uniform visual
-    // scale of the same fixed 860-unit layout, so it does NOT free up logical row space.
-
     // Brush size: GUI-only (pen/mouse editing is GUI-only), so no APVTS parameter.
     brushSizeSlider.setSliderStyle (juce::Slider::LinearHorizontal);
     brushSizeSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 48, 16);
@@ -96,18 +98,6 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     brushLabel.setText ("Brush", juce::dontSendNotification);
     brushLabel.setJustificationType (juce::Justification::centredRight);
     content.addAndMakeVisible (brushLabel);
-
-    // Transpose (agent-wiki/plan-roadmap.md B3): a DAW param, attached like the tab knobs,
-    // just laid out as a utility-row linear slider since it has no tab yet.
-    transposeSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    transposeSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 48, 16);
-    transposeSlider.setTextValueSuffix (" st");
-    content.addAndMakeVisible (transposeSlider);
-    transposeAttach = std::make_unique<SliderAttach> (proc.apvts, "transpose", transposeSlider);
-
-    transposeLabel.setText ("Transpose", juce::dontSendNotification);
-    transposeLabel.setJustificationType (juce::Justification::centredRight);
-    content.addAndMakeVisible (transposeLabel);
 
     // GUI-only switches
     liveButton.setToggleState (proc.getLiveMode(), juce::dontSendNotification);
@@ -185,17 +175,21 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setInfo (revPredelay.slider,"Gap before the reverb starts.");
     setInfo (revMetal.slider,   "Trades diffusion for a harder, more metallic reflection character.");
     setInfo (revFeed.slider,    "Feeds the reverb tail back into the held spectrum. Independent of the main Feed.");
-    setInfo (phaseNoiseSlider,  "Shimmer: random per-frame phase jitter. Never detunes permanently.");
     setInfo (sizeBox,           "Spectral resolution vs time response. Changing it resets the held sound.");
     setInfo (presetBox,         "Load a starting point. Touching any knob afterward deselects it. Values are placeholders, not curated yet.");
     setInfo (liveButton,        "Report zero latency to the host (for live playing; disables delay compensation).");
     setInfo (keepButton,        "Save the held sound inside the session, so it's still ringing when the project reopens.");
     setInfo (undoButton,        "Revert the held sound to before the last brush stroke or permanent-shaper engagement.");
     setInfo (brushSizeSlider,   "Drag on the display to boost/cut held tones. This sets the brush width.");
-    setInfo (transposeSlider,  "Pitch-shift the held sound (semitones), non-destructively. MIDI notes add to this, relative to middle C.");
+    setInfo (transpose.slider,  "Pitch-shift the held sound (semitones), non-destructively. MIDI notes add to this, relative to middle C. Snap quantises to whole semitones; Glide smooths any pitch change, including MIDI note-ons, into a portamento.");
+    setInfo (snapButton,        "Discrete transposition: snap the knob to whole semitones. MIDI notes are always discrete.");
+    setInfo (transposeGlide.slider, "Portamento time for pitch changes -- knob moves and MIDI note-ons alike. 0 = instant.");
+    setInfo (spread.slider,     "Momentary per-bin left/right spread of the output. Never enters the held sound.");
+    setInfo (phaseNoise.slider, "Shimmer: random per-frame phase jitter. Never detunes permanently.");
     setInfo (shaperTab,         "Per-bin amplitude shaping: tilts, combs and more.");
     setInfo (harmonizeTab,      "Coupled-oscillator pitch interaction between held tones.");
     setInfo (reverbTab,         "Plate reverb on the output.");
+    setInfo (performTab,        "Transpose, Spread and Phase Noise -- performance controls.");
 
     setActiveTab (proc.getUiTab()); // restore the last shown tab (persisted in state)
 
@@ -294,6 +288,7 @@ void SpectralHoldEditor::setActiveTab (int tabIndex)
     Knob* shaperKnobs[]    = { &shapeAmt, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel, &shapeMode };
     Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
     Knob* reverbKnobs[]    = { &revMix, &revDecay, &revDamp, &revSize, &revPredelay, &revMetal, &revFeed };
+    Knob* performKnobs[]   = { &transpose, &transposeGlide, &spread, &phaseNoise };
 
     auto show = [] (Knob* const* ks, int n, bool visible)
     {
@@ -306,10 +301,13 @@ void SpectralHoldEditor::setActiveTab (int tabIndex)
     show (shaperKnobs,    7, tabIndex == 0);
     show (harmonizeKnobs, 3, tabIndex == 1);
     show (reverbKnobs,    7, tabIndex == 2);
+    show (performKnobs,   4, tabIndex == 3);
+    snapButton.setVisible (tabIndex == 3);
 
     shaperTab.setToggleState    (tabIndex == 0, juce::dontSendNotification);
     harmonizeTab.setToggleState (tabIndex == 1, juce::dontSendNotification);
     reverbTab.setToggleState    (tabIndex == 2, juce::dontSendNotification);
+    performTab.setToggleState   (tabIndex == 3, juce::dontSendNotification);
 }
 
 void SpectralHoldEditor::paint (juce::Graphics& g)
@@ -322,7 +320,7 @@ void SpectralHoldEditor::resized()
     // Resizable editor (agent-wiki/plan-roadmap.md B8): content is a fixed 860x580 canvas,
     // scaled uniformly to fill whatever size the window actually is. This does NOT give
     // layoutContent() more logical space to work with at any window size -- it's a visual
-    // zoom, not a reflow (see the `spread` note above on why that still has no widget).
+    // zoom, not a reflow.
     const float scale = (float) getWidth() / 860.0f;
     content.setTransform (juce::AffineTransform::scale (scale));
     content.setBounds (0, 0, 860, 580); // triggers layoutContent() once (bounds don't change
@@ -361,36 +359,47 @@ void SpectralHoldEditor::layoutContent()
     layoutRow (row1, row1Knobs, 7);
 
     // tab strip -- Preset (B9) hugs the right; the tab strip's own width is generous (was
-    // ~281px/tab for three short labels), so 150px for the combo leaves plenty for both.
+    // ~281px/tab for three short labels, ~211px/tab now with four), so 150px for the combo
+    // leaves plenty for all four.
     auto tabs = controls.removeFromTop (28).reduced (0, 2);
     presetBox.setBounds (tabs.removeFromRight (150).reduced (4, 0));
-    const int tw = tabs.getWidth() / 3;
+    const int tw = tabs.getWidth() / 4;
     shaperTab.setBounds    (tabs.removeFromLeft (tw).reduced (2, 0));
     harmonizeTab.setBounds (tabs.removeFromLeft (tw).reduced (2, 0));
-    reverbTab.setBounds    (tabs.reduced (2, 0));
+    reverbTab.setBounds    (tabs.removeFromLeft (tw).reduced (2, 0));
+    performTab.setBounds   (tabs.reduced (2, 0));
 
-    // tabbed row: all three share the same area; visibility picks the active one
+    // tabbed row: all four share the same area; visibility picks the active one
+    // (layoutRow takes its area by value, so each call below works on its own copy of
+    // `controls` -- they don't consume it from each other).
     Knob* shaperKnobs[]    = { &shapeAmt, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel, &shapeMode };
     Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
     Knob* reverbKnobs[]    = { &revMix, &revDecay, &revDamp, &revSize, &revPredelay, &revMetal, &revFeed };
+    Knob* performKnobs[]   = { &transpose, &transposeGlide, &spread, &phaseNoise };
     layoutRow (controls, shaperKnobs,    7);
     layoutRow (controls, harmonizeKnobs, 3);
     layoutRow (controls, reverbKnobs,    7);
+    // Perform (agent-wiki/plan-uifix.md U3): Snap toggle carved from the right, same
+    // pattern the old Freeze button used (commit 5805a2a); 4 knobs fill the rest -- well
+    // within the row budget the shaper tab's 7 knobs already prove out.
+    {
+        auto performArea = controls;
+        auto snapCell = performArea.removeFromRight (performArea.getWidth() / 8);
+        snapButton.setBounds (snapCell.withSizeKeepingCentre (
+            juce::jmax (40, snapCell.getWidth() - 8), 28));
+        layoutRow (performArea, performKnobs, 4);
+    }
 
     // Utility row width budget (bottom is ~844px, see agent-wiki/build-and-test.md's note
     // on why this can't be visually verified here -- checked by adding up these constants
     // against bottom's actual width, not by eyeballing): right 80+50+120+44=294, left
-    // 90+46+50+100+58+100+66=510, total 804 of 844 (40px margin). Recompute the same way
-    // before adding another control to this row -- it's already tight.
+    // 90+46+50=186, total 480 of 844 (364px margin) -- Transpose/Phase Noise moved to the
+    // Perform tab (U3), so this row is no longer tight.
     sizeBox.setBounds (bottom.removeFromRight (80));
     sizeLabel.setBounds (bottom.removeFromRight (50));
     liveButton.setBounds (bottom.removeFromLeft (90));
     keepButton.setBounds (bottom.removeFromLeft (46));
     undoButton.setBounds (bottom.removeFromLeft (50));
-    transposeSlider.setBounds (bottom.removeFromLeft (100));
-    transposeLabel.setBounds (bottom.removeFromLeft (58));
-    phaseNoiseSlider.setBounds (bottom.removeFromLeft (100));
-    phaseNoiseLabel.setBounds (bottom.removeFromLeft (66));
     brushSizeSlider.setBounds (bottom.removeFromRight (120));
     brushLabel.setBounds (bottom.removeFromRight (44));
 }
