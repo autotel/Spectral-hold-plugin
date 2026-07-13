@@ -15,6 +15,12 @@ public:
 
     juce::Label* createSliderTextBox (juce::Slider&) override;
 
+    // Tab-strip buttons (component ID "tab-first"/"tab-mid"/"tab-last", set by the editor)
+    // draw as a flat segmented control -- only the strip's outer edges are rounded, not
+    // every button. Everything else falls through to the normal LookAndFeel_V4 look.
+    void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour& backgroundColour,
+                               bool isMouseOverButton, bool isButtonDown) override;
+
     // Must be called BEFORE the sliders that use this look-and-feel are destroyed
     // (i.e. as the first line of the owning editor's destructor). The glow animation
     // keeps a map of raw Component* keyed to hovered sliders; a stray timer tick after

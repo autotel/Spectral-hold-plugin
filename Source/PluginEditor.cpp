@@ -54,7 +54,13 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     snapAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         proc.apvts, "transposeSnap", snapButton);
 
-    // tab strip (radio-style toggles switching the visible knob row)
+    // tab strip (radio-style toggles switching the visible knob row). Component IDs drive
+    // SpectralLookAndFeel::drawButtonBackground's segmented-flat-corner style: only the
+    // strip's outer edges round, not every button.
+    shaperTab.setComponentID    ("tab-first");
+    harmonizeTab.setComponentID ("tab-mid");
+    reverbTab.setComponentID    ("tab-mid");
+    performTab.setComponentID   ("tab-last");
     for (auto* t : { &shaperTab, &harmonizeTab, &reverbTab, &performTab })
     {
         t->setClickingTogglesState (true);
@@ -393,12 +399,13 @@ void SpectralHoldEditor::layoutContent()
     // Utility row width budget (bottom is ~844px, see agent-wiki/build-and-test.md's note
     // on why this can't be visually verified here -- checked by adding up these constants
     // against bottom's actual width, not by eyeballing): right 80+50+120+44=294, left
-    // 90+46+50=186, total 480 of 844 (364px margin) -- Transpose/Phase Noise moved to the
-    // Perform tab (U3), so this row is no longer tight.
+    // 90+70+50=210, total 504 of 844 (340px margin) -- Transpose/Phase Noise moved to the
+    // Perform tab (U3), so this row is no longer tight. keepButton widened from 46 to 70 --
+    // 46 was too narrow for its tickbox + "Keep" text (label was clipping).
     sizeBox.setBounds (bottom.removeFromRight (80));
     sizeLabel.setBounds (bottom.removeFromRight (50));
     liveButton.setBounds (bottom.removeFromLeft (90));
-    keepButton.setBounds (bottom.removeFromLeft (46));
+    keepButton.setBounds (bottom.removeFromLeft (70));
     undoButton.setBounds (bottom.removeFromLeft (50));
     brushSizeSlider.setBounds (bottom.removeFromRight (120));
     brushLabel.setBounds (bottom.removeFromRight (44));

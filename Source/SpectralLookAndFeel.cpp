@@ -23,6 +23,15 @@ SpectralLookAndFeel::SpectralLookAndFeel()
     setColour (juce::ToggleButton::textColourId,        Colour (0xffd0d0dc));
     setColour (juce::ToggleButton::tickColourId,        accent);
     setColour (juce::ToggleButton::tickDisabledColourId, Colour (0xff4a4a56));
+
+    // TextButton on/off contrast: the default V4 look barely distinguishes toggled-on from
+    // off against this dark theme (e.g. the Snap button was unclear whether it was engaged).
+    // On = a solid accent fill with dark text; off = the same dark chrome as the ComboBoxes,
+    // light text.
+    setColour (juce::TextButton::buttonColourId,   Colour (0xff20202a));
+    setColour (juce::TextButton::buttonOnColourId, accent);
+    setColour (juce::TextButton::textColourOffId,  Colour (0xffd0d0dc));
+    setColour (juce::TextButton::textColourOnId,   Colour (0xff101014));
 }
 
 SpectralLookAndFeel::~SpectralLookAndFeel()
@@ -145,4 +154,36 @@ juce::Label* SpectralLookAndFeel::createSliderTextBox (juce::Slider& s)
     l->setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
     l->setColour (juce::TextEditor::outlineColourId,        juce::Colours::transparentBlack);
     return l;
+}
+
+void SpectralLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,
+                                                const juce::Colour& backgroundColour,
+                                                bool isMouseOverButton, bool isButtonDown)
+{
+    using namespace juce;
+
+    const auto id = b.getComponentID();
+    if (! id.startsWith ("tab-"))
+    {
+        LookAndFeel_V4::drawButtonBackground (g, b, backgroundColour, isMouseOverButton, isButtonDown);
+        return;
+    }
+
+    // Segmented tab strip: only the strip's outer edges are rounded (first button's left
+    // corners, last button's right corners); every button in between -- and the inner edges
+    // of the first/last -- stays flat, so the whole row reads as one continuous control.
+    auto colour = backgroundColour;
+    if (isButtonDown)           colour = colour.darker (0.15f);
+    else if (isMouseOverButton) colour = colour.brighter (0.08f);
+
+    const bool roundLeft  = id == "tab-first";
+    const bool roundRight = id == "tab-last";
+    constexpr float corner = 6.0f;
+
+    auto bounds = b.getLocalBounds().toFloat();
+    Path p;
+    p.addRoundedRectangle (bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
+                           corner, corner, roundLeft, roundRight, roundLeft, roundRight);
+    g.setColour (colour);
+    g.fillPath (p);
 }

@@ -16,6 +16,18 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   per-component LookAndFeel effect, it needs the same "stop first" call in the editor
   destructor; don't assume the LNF's own destructor is early enough.
 
+- **`TextButton` on/off contrast and the segmented tab strip** are both driven by
+  `SpectralLookAndFeel`, not per-button code. `buttonOnColourId`/`buttonColourId` (set once
+  in the LNF constructor: accent fill when on, dark chrome when off) make latching buttons
+  like Snap unambiguous — the default V4 look barely distinguished the two states against
+  this dark theme. The tab strip's flat/segmented corners (only the strip's outer edges
+  round) are keyed off `Button::getComponentID()` — the editor tags the four tab buttons
+  `"tab-first"`/`"tab-mid"`/`"tab-mid"`/`"tab-last"` before adding them, and
+  `drawButtonBackground` checks that ID to pick the custom flat-corner path vs. falling
+  through to the normal `LookAndFeel_V4` rounded-rect for every other button (Snap, Undo,
+  etc.). Adding a 5th tab means re-tagging: the *new* last tab gets `"tab-last"`, the old
+  last one becomes `"tab-mid"`.
+
 ## DSP
 - **Filter and Compress were removed** (see [plan-spectral-shaper.md](plan-spectral-shaper.md)),
   replaced by the unified **shaper** (`ShapeCurves.h`, `shape`/`shapeMode`/etc. params). If
