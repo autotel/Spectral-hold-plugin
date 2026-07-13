@@ -28,6 +28,21 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   etc.). Adding a 5th tab means re-tagging: the *new* last tab gets `"tab-last"`, the old
   last one becomes `"tab-mid"`.
 
+## Host parameter display text
+- **`AudioParameterFloat` defaults to 7 decimal places whenever `NormalisableRange::interval`
+  is 0** (true for every continuous knob — the interval is only nonzero if you explicitly
+  step-quantise a param, which we don't). Without an explicit `withStringFromValueFunction`,
+  a host's own knob display (Maschine, Push, any generic param strip) shows the raw value at
+  that precision — `"3820.4271000"` for a frequency knob, no unit, all digits. Every float
+  param in `createLayout()` now sets one of four shared formatter helpers (see
+  [parameters.md](parameters.md) Notes for what each does); if you add a new float param,
+  give it one too, or it silently reverts to the 7-decimal default. `AudioParameterBool`
+  doesn't have this problem — its default `getText` already returns `"On"`/`"Off"`.
+- **`shape` is the one param that already looked right** before this pass — it has its own
+  `shapeValueToString` (curve names, e.g. `"Sigmoid"`, `"Level>Sigmoid"` mid-crossfade). Not
+  a generic formatter; don't try to unify it with the others, the crossfade text is specific
+  to how the shaper's 5 curves blend into each other.
+
 ## DSP
 - **Filter and Compress were removed** (see [plan-spectral-shaper.md](plan-spectral-shaper.md)),
   replaced by the unified **shaper** (`ShapeCurves.h`, `shape`/`shapeMode`/etc. params). If

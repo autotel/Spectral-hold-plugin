@@ -21,6 +21,80 @@ namespace
             return kShapeNames[i1];
         return kShapeNames[i0] + ">" + kShapeNames[i1];
     }
+
+    // Host-facing parameter text. Without an explicit stringFromValueFunction,
+    // AudioParameterFloat defaults to 7 decimal places whenever the range has no explicit
+    // `interval` (true for every continuous knob here) -- e.g. "3820.4271000" in a host's
+    // knob display (Maschine etc.), a meaningless wall of digits with no unit. Every knob
+    // below gets a function that shows at most 2 decimal places, trimmed to only as many as
+    // the value actually needs, plus the unit that actually matches what the knob does.
+
+    // "3.50"/"3.00" -> "3.5"/"3": drop trailing zeros, then a trailing bare '.'.
+    juce::String trimDecimals (juce::String s)
+    {
+        if (! s.containsChar ('.'))
+            return s;
+        while (s.endsWithChar ('0'))
+            s = s.dropLastCharacters (1);
+        if (s.endsWithChar ('.'))
+            s = s.dropLastCharacters (1);
+        return s;
+    }
+
+    // Plain number + unit suffix (e.g. "1200 ms", "0.5 oct").
+    juce::AudioParameterFloatAttributes withNumberText (juce::AudioParameterFloatAttributes attrs,
+                                                        juce::String suffix, int decimals = 2)
+    {
+        return attrs.withStringFromValueFunction ([decimals, suffix] (float v, int) -> juce::String
+        {
+            auto s = trimDecimals (juce::String (v, decimals));
+            return suffix.isEmpty() ? s : s + " " + suffix;
+        });
+    }
+
+    // Percent of the parameter's OWN range (not a hardcoded 0..1 assumption), so a knob like
+    // Harmonize (0..0.1) still reads a full 0-100% instead of maxing out at "10%".
+    juce::AudioParameterFloatAttributes withPercentText (juce::AudioParameterFloatAttributes attrs,
+                                                         float rangeMin, float rangeMax)
+    {
+        return attrs.withStringFromValueFunction ([rangeMin, rangeMax] (float v, int) -> juce::String
+        {
+            const float pct = (v - rangeMin) / (rangeMax - rangeMin) * 100.0f;
+            return trimDecimals (juce::String (pct, 2)) + "%";
+        });
+    }
+
+    // Signed percent for a bipolar -1..+1 knob: value*100 directly (0 -> "0%", not "50%").
+    juce::AudioParameterFloatAttributes withSignedPercentText (juce::AudioParameterFloatAttributes attrs)
+    {
+        return attrs.withStringFromValueFunction ([] (float v, int) -> juce::String
+        {
+            return trimDecimals (juce::String (v * 100.0f, 2)) + "%";
+        });
+    }
+
+    // Frequency: Hz below 1kHz, kHz above -- matches how every EQ-ish plugin shows it.
+    juce::AudioParameterFloatAttributes withFreqText (juce::AudioParameterFloatAttributes attrs)
+    {
+        return attrs.withStringFromValueFunction ([] (float v, int) -> juce::String
+        {
+            if (v >= 1000.0f)
+                return trimDecimals (juce::String (v / 1000.0f, 2)) + " kHz";
+            return trimDecimals (juce::String (v, 1)) + " Hz";
+        });
+    }
+
+    // Output is linear gain (0..2, 1=unity) -- the DSP/limiter's own units are dB, and a
+    // raw gain multiplier ("1.4142135") means nothing to a user. Show dB instead.
+    juce::AudioParameterFloatAttributes withGainDbText (juce::AudioParameterFloatAttributes attrs)
+    {
+        return attrs.withStringFromValueFunction ([] (float v, int) -> juce::String
+        {
+            if (v <= 1.0e-4f)
+                return juce::String ("-inf dB");
+            return trimDecimals (juce::String (juce::Decibels::gainToDecibels (v), 2)) + " dB";
+        });
+    }
 }
 
 SpectralHoldProcessor::SpectralHoldProcessor()
@@ -86,38 +160,46 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     // --- P1: Hold ---
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "feed", 1 }, "Feed",
-        NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        NormalisableRange<float> (0.0f, 1.0f), 0.5f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "loss", 1 }, "Loss",
-        NormalisableRange<float> (0.0f, 1.0f), 0.2f));
+        NormalisableRange<float> (0.0f, 1.0f), 0.2f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "ewLocation", 1 }, "E<->W",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // listener/recorder position, East(0,
-                                                        // default = legacy) .. West(1)
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f, // listener/recorder position, East(0,
+                                                      // default = legacy) .. West(1)
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "dryWet", 1 }, "Dry/Wet",
-        NormalisableRange<float> (0.0f, 1.0f), 1.0f)); // 1 = wet-only (today's behavior)
+        NormalisableRange<float> (0.0f, 1.0f), 1.0f, // 1 = wet-only (today's behavior)
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "output", 1 }, "Output",
-        NormalisableRange<float> (0.0f, 2.0f), 1.0f)); // output level (linear gain)
+        NormalisableRange<float> (0.0f, 2.0f), 1.0f, // output level (linear gain)
+        withGainDbText (AudioParameterFloatAttributes())));
 
     // Output limiter (post-everything safety ceiling; see agent-wiki/dsp-design.md)
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "limThreshold", 1 }, "Limiter Threshold",
-        NormalisableRange<float> (-24.0f, 0.0f), 0.0f)); // dB ceiling
+        NormalisableRange<float> (-24.0f, 0.0f), 0.0f, // dB ceiling
+        withNumberText (AudioParameterFloatAttributes(), "dB")));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "limRelease", 1 }, "Limiter Release",
-        NormalisableRange<float> (50.0f, 5000.0f, 0.0f, 0.4f), 1200.0f)); // ms, skewed
+        NormalisableRange<float> (50.0f, 5000.0f, 0.0f, 0.4f), 1200.0f, // ms, skewed
+        withNumberText (AudioParameterFloatAttributes(), "ms")));
 
     // --- P2: Shaper (replaces the old Filter + Compress; see agent-wiki/dsp-design.md) ---
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shapeAmt", 1 }, "Shape Amount",
-        NormalisableRange<float> (0.0f, 1.0f), 1.0f));
+        NormalisableRange<float> (0.0f, 1.0f), 1.0f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shape", 1 }, "Shape",
@@ -126,70 +208,84 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shapeFreq", 1 }, "Shape Freq",
-        NormalisableRange<float> (20.0f, 20000.0f, 0.0f, 0.25f), 1000.0f)); // skew = log-ish
+        NormalisableRange<float> (20.0f, 20000.0f, 0.0f, 0.25f), 1000.0f, // skew = log-ish
+        withFreqText (AudioParameterFloatAttributes())));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shapeWidth", 1 }, "Shape Width",
-        NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        NormalisableRange<float> (0.0f, 1.0f), 0.5f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shapeCount", 1 }, "Shape Count",
-        NormalisableRange<float> (0.0f, 1.0f), 1.0f));
+        NormalisableRange<float> (0.0f, 1.0f), 1.0f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shapeLevel", 1 }, "Shape Level",
-        NormalisableRange<float> (-1.0f, 1.0f), 0.0f));
+        NormalisableRange<float> (-1.0f, 1.0f), 0.0f,
+        withSignedPercentText (AudioParameterFloatAttributes())));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "shapeMode", 1 }, "Shape Mode",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // 0 = momentary, 1 = permanent
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f, // 0 = momentary, 1 = permanent
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     // Harmonize (coupled-oscillator tone interaction; see agent-wiki/harmonize.md).
     // Master amount closes page 2 (accepted compromise, see plan-fixes.md §9).
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "harmonize", 1 }, "Harmonize",
-        NormalisableRange<float> (0.0f, 0.1f), 0.0f));
+        NormalisableRange<float> (0.0f, 0.1f), 0.0f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 0.1f)));
 
     // --- P3: Space (harmonize character + the output reverb) ---
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "harmWidth", 1 }, "Harm Width",
-        NormalisableRange<float> (0.01f, 3.0f, 0.0f, 0.4f), 0.5f));
+        NormalisableRange<float> (0.01f, 3.0f, 0.0f, 0.4f), 0.5f,
+        withNumberText (AudioParameterFloatAttributes(), "oct")));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "harmonic", 1 }, "Harmonic",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     // Output reverb (post-fader, pre-limiter; see agent-wiki/plan-reverb.md)
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revMix", 1 }, "Reverb Mix",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // 0 = bit-exact dry
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f, // 0 = bit-exact dry
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revDecay", 1 }, "Reverb Decay",
-        NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        NormalisableRange<float> (0.0f, 1.0f), 0.5f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revDamp", 1 }, "Reverb Damp",
-        NormalisableRange<float> (0.0f, 1.0f), 0.3f));
+        NormalisableRange<float> (0.0f, 1.0f), 0.3f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revSize", 1 }, "Reverb Size",
-        NormalisableRange<float> (0.5f, 2.0f), 1.0f));
+        NormalisableRange<float> (0.5f, 2.0f), 1.0f,
+        withNumberText (AudioParameterFloatAttributes(), "x")));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revPredelay", 1 }, "Reverb Predelay",
-        NormalisableRange<float> (0.0f, 250.0f, 0.0f, 0.35f), 20.0f)); // ms, log-ish skew
+        NormalisableRange<float> (0.0f, 250.0f, 0.0f, 0.35f), 20.0f, // ms, log-ish skew
+        withNumberText (AudioParameterFloatAttributes(), "ms")));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revMetal", 1 }, "Reverb Metal",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f)); // less diffusion, no LFO smear
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f, // less diffusion, no LFO smear
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     // --- P4 "Perform" (partial): Transpose (+Snap, +Glide), Spread, Phase Noise, Reverb
     // Feed (+ morph if B11 lands) -- agent-wiki/plan-uifix.md U3.
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "transpose", 1 }, "Transpose",
         NormalisableRange<float> (-12.0f, 12.0f), 0.0f,
-        AudioParameterFloatAttributes().withLabel ("st")));
+        withNumberText (AudioParameterFloatAttributes(), "st")));
 
     // Transpose snap (agent-wiki/plan-uifix.md U3): quantise the KNOB to whole semitones;
     // MIDI notes are already discrete regardless. Default off = today's continuous knob.
@@ -201,23 +297,26 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "transposeGlide", 1 }, "Transpose Glide",
         NormalisableRange<float> (0.0f, 2000.0f, 0.0f, 0.35f), 0.0f,
-        AudioParameterFloatAttributes().withLabel ("ms")));
+        withNumberText (AudioParameterFloatAttributes(), "ms")));
 
     // Stereo spread (agent-wiki/plan-roadmap.md B5): momentary per-bin L/R gain, never
     // touches the held state. spread=0 is a no-op on both mono and stereo buses.
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "spread", 1 }, "Spread",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     // Continuous Phase Noise (agent-wiki/plan-roadmap.md B4): replaces the old bool
     // `phaseNoise`. Migrated from old sessions in setStateInformation() (legacy "on" -> 0.3).
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "phaseNoiseAmt", 1 }, "Phase Noise",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "revFeed", 1 }, "Reverb Feed",
-        NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        NormalisableRange<float> (0.0f, 1.0f), 0.0f,
+        withPercentText (AudioParameterFloatAttributes(), 0.0f, 1.0f)));
 
     return layout;
 }

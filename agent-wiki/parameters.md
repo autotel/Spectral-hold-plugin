@@ -101,6 +101,20 @@ the full topology/constants and [gotchas.md](gotchas.md) for the hard-bypass and
 size-knob-pitch-bend behavior.
 
 ## Notes
+- **Host-facing display text** (`PluginProcessor.cpp`, anonymous namespace): every float
+  param has an explicit `withStringFromValueFunction` — without one, `AudioParameterFloat`
+  defaults to **7 decimal places** whenever the range has no explicit `interval` (true for
+  every continuous knob here), so a host's knob display (Maschine etc.) would show something
+  like `"3820.4271000"` — a meaningless wall of digits with no unit. Four shared helpers
+  cover it: `withNumberText` (value + unit suffix, e.g. `"1200 ms"`), `withPercentText`
+  (percent of the param's *own* range, not a hardcoded 0..1 — so `harmonize` (0..0.1) still
+  reads a full 0-100% instead of maxing out at "10%"), `withSignedPercentText` (bipolar -1..1
+  knobs, `0 -> "0%"` not `"50%"`), `withFreqText` (Hz below 1kHz, kHz above), and
+  `withGainDbText` (the `output` knob is linear 0..2 gain internally; displayed in dB, what
+  it actually means to a user). All of them trim to at most 2 decimal places and drop
+  trailing zeros (`"3.50"` → `"3.5"`, `"3.00"` → `"3"`). `shape` keeps its own
+  `shapeValueToString` (curve names, e.g. `"Sigmoid"`) — the one param that already had this
+  right.
 - **Spectral brush** (not a DAW parameter): drag on the display to permanently boost/cut the
   held spectrum around a tone. See [gui-display.md](gui-display.md) / [dsp-design.md](dsp-design.md).
 - **FT size** range is `kMinFftOrder=10 .. kMaxFftOrder=13` (orders, i.e. log2). Engines
