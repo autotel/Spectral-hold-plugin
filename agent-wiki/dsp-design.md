@@ -10,6 +10,9 @@ All of this lives in `Source/SpectralEngine.{h,cpp}`. One engine per channel.
 - I/O uses two sliding ring buffers of length `fftSize` (`inRing`, `outRing`). Per sample:
   pop one output sample, push one input sample; every `hopSize` samples run `processFrame()`.
 - **Latency = fftSize.** Reported to the host via `setLatencySamples()`.
+- **Bin 0 (DC) is never held** (zeroed every frame; the per-bin loop runs `k = 1..`), and
+  the popped output passes a one-pole **5 Hz DC blocker** (`kDcBlockHz`). A held 0 Hz
+  phasor is just a DC offset; see gotchas.md "DC / sub-bass runaway".
 - `performRealOnlyInverseTransform` already applies the 1/N normalisation — do **not** add
   another 1/N. (Verified empirically: unity-ish passthrough, smoke-test `maxAbs ≈ 1.06`.)
 
@@ -189,9 +192,11 @@ see gotchas.md for why the *old* `revFeed` never worked). Replaces the removed f
   analysis frame by construction — no extra bookkeeping needed.
 - Aux gets its **own forward FFT** (`auxFftData`), computed only when `revFeed > 1e-4` so
   the default costs nothing.
-- Injection: `injAux = revFeed · injScale · Xaux[k] · comp[k]` — reuses the same
-  `injScale`/`comp` as the live path, so it responds to Loss and the momentary-cut
-  compensation the same way.
+- Injection: `injAux = revFeed · injScale · Xaux[k] · comp[k] · auxLowCut(f_k)` — reuses
+  the same `injScale`/`comp` as the live path, so it responds to Loss and the momentary-cut
+  compensation the same way. `auxLowCut` is 0 at ≤ 20 Hz, raised-cosine to 1 at 40 Hz:
+  the reverb's gain peaks at DC/sub, so without it those bins self-oscillate in the loop
+  (gotchas.md "DC / sub-bass runaway").
 - **Feedback-loop safety:** live input's `inj` is added uncapped (as always); `injAux` is
   added through the *same* soft ceiling the permanent shaper's boost uses
   (`g = max(0, 1 − |S|/permCeil)`, `permCeil = kPermCeilNorm·0.5·fftSize`) — because unlike

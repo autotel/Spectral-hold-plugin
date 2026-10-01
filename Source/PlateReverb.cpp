@@ -8,6 +8,9 @@ namespace
     constexpr float kInLen1 = 142.0f, kInLen2 = 107.0f, kInLen3 = 379.0f, kInLen4 = 277.0f;
     constexpr float kInGain1 = 0.750f, kInGain2 = 0.750f, kInGain3 = 0.625f, kInGain4 = 0.625f;
     constexpr float kBandwidth = 0.9995f; // one-pole coef on the input (near-transparent)
+    constexpr float kDcBlockHz = 5.0f;    // input DC blocker: the tank's DC gain is ~7x at
+                                          // max decay (taps don't cancel), so any DC in
+                                          // would come out amplified -- and loop via revFeed
 
     // Tank (lengths scaled by sr AND size; excursion scaled by sr only).
     constexpr float kModLenA = 672.0f, kModLenB = 908.0f;
@@ -79,6 +82,7 @@ void PlateReverb::prepare (double sampleRate)
     lfoIncB = juce::MathConstants<float>::twoPi * kLfoHzB / (float) sr;
 
     sizeCoef = 1.0f - std::exp (-1.0f / (0.05f * (float) sr)); // ~50 ms
+    dcR = std::exp (-juce::MathConstants<float>::twoPi * kDcBlockHz / (float) sr);
 
     reset();
 }
@@ -91,6 +95,7 @@ void PlateReverb::reset()
     modApB.clear(); delayB1.clear(); apB2.clear(); delayB2.clear();
 
     bandwidthLp = 0.0f;
+    dcX1 = dcY1 = 0.0f;
     dampLpA = 0.0f; dampLpB = 0.0f;
     lastOutA = 0.0f; lastOutB = 0.0f;
     lfoPhaseA = 0.0f; lfoPhaseB = 0.0f;
@@ -125,6 +130,9 @@ void PlateReverb::process (const float* inMono, float* outL, float* outR, int nu
 
         // input chain
         float u = delayStep (predelay, predelaySmoothed, inMono[n]);
+        dcY1 = u - dcX1 + dcR * dcY1;
+        dcX1 = u;
+        u = dcY1;
         bandwidthLp += kBandwidth * (u - bandwidthLp);
         u = bandwidthLp;
         u = allpassStep (inAp1, kInLen1 * srScale, inGain1, u);

@@ -47,6 +47,26 @@ namespace
                                                 // fresh recording claims it (avoids phase-
                                                 // mushing old content with the new tone)
 
+    // DC / sub-audio protection (see agent-wiki/gotchas.md "DC / sub-bass runaway").
+    // The reverb passes DC with its HIGHEST gain (the tank's damping LP keeps lows, the
+    // loop recirculates them), so the revFeed loop (engine -> reverb -> aux -> engine) has
+    // its largest loop gain at DC/sub bins: from a float-noise seed they grow exponentially
+    // and, minutes later, sit at the soft ceiling as a DC offset + 10-40 Hz rumble that
+    // eats all the limiter's headroom. Aux injection is therefore faded out below
+    // kAuxCutHz (0 at kAuxCutLoHz, raised-cosine to 1 at kAuxCutHiHz), and the engine's
+    // output passes a one-pole DC blocker at kDcBlockHz.
+    constexpr float kAuxCutLoHz = 20.0f;
+    constexpr float kAuxCutHiHz = 40.0f;
+    constexpr float kDcBlockHz  = 5.0f;
+
+    inline float auxLowCut (float hz)
+    {
+        if (hz <= kAuxCutLoHz) return 0.0f;
+        if (hz >= kAuxCutHiHz) return 1.0f;
+        const float t = (hz - kAuxCutLoHz) / (kAuxCutHiHz - kAuxCutLoHz);
+        return 0.5f - 0.5f * std::cos (juce::MathConstants<float>::pi * t);
+    }
+
     // playback gain / edit weight at distance d along the E<->W line
     inline float ewAtt (float d)
     {
@@ -59,6 +79,7 @@ void SpectralEngine::prepare (double sr, int maxFftOrder)
 {
     sampleRate = sr;
     maxOrder   = maxFftOrder;
+    dcR = std::exp (-juce::MathConstants<float>::twoPi * kDcBlockHz / (float) sr);
     maxFftSize = 1 << maxFftOrder;
 
     // Preallocate everything at the maximum size so setOrder() never allocates.
@@ -162,6 +183,7 @@ void SpectralEngine::reset()
     for (int l = 0; l < kNumLayers; ++l)
         std::copy (expectedAdv.begin(), expectedAdv.begin() + maxBins, omega.begin() + (long) li (l, 0));
     inWrite = outRead = hopCount = 0;
+    dcX1 = dcY1 = 0.0f;
 
     // Transpose glide (agent-wiki/plan-uifix.md U3): force the lazy-init in processFrame()
     // to re-snap transposeSmoothed to the current target next frame, rather than gliding
@@ -178,8 +200,11 @@ void SpectralEngine::process (const float* in, const float* aux, float* out, int
         const float x = in[n];
         const float a = (aux != nullptr) ? aux[n] : 0.0f;
 
-        // pop output (latency = fftSize)
-        out[n] = outRing[(size_t) outRead] * winNorm;
+        // pop output (latency = fftSize), through the DC blocker (see kDcBlockHz)
+        const float y = outRing[(size_t) outRead] * winNorm;
+        dcY1 = y - dcX1 + dcR * dcY1;
+        dcX1 = y;
+        out[n] = dcY1;
         outRing[(size_t) outRead] = 0.0f;
         outRead = (outRead + 1) % fftSize;
 
@@ -298,13 +323,20 @@ void SpectralEngine::processFrame (const Params& p)
     std::fill (injStrengthScratch.begin(), injStrengthScratch.begin() + numBins, 0.0f);
 
     // --- spectral update
-    for (int k = 0; k < numBins; ++k)
+    // Bin 0 (DC) is never held: a free-running 0 Hz phasor is just a DC offset, and at
+    // loss=0 it would integrate any input/aux DC forever (see kDcBlockHz above).
+    for (int l = 0; l < kNumLayers; ++l)
+        S[li (l, 0)] = {};
+    fftData[0] = fftData[1] = 0.0f;
+    dispScratch[0] = {};
+
+    for (int k = 1; k < numBins; ++k)
     {
         // shaper L[k] in [-1..+1], computed once per bin from the listener mix. ratio=1
-        // makes the Level-shape component a no-op (bin 0 and inactive/noise-floor bins,
-        // mirroring the old Compress).
+        // makes the Level-shape component a no-op (inactive/noise-floor bins, mirroring
+        // the old Compress; bin 0 is skipped entirely above).
         float L = 0.0f;
-        if (shaperActive && k > 0)
+        if (shaperActive)
         {
             float ratio = 1.0f;
             if (shapeMean > 1.0e-9f)
@@ -340,7 +372,7 @@ void SpectralEngine::processFrame (const Params& p)
         if (auxActive)
         {
             const std::complex<float> xa { auxFftData[(size_t) (2 * k)], auxFftData[(size_t) (2 * k + 1)] };
-            injAux = p.revFeed * injScale * xa * comp;
+            injAux = p.revFeed * injScale * xa * comp * auxLowCut ((float) k * refFreq);
         }
         const float aInj = std::abs (inj + injAux);
 

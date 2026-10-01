@@ -88,6 +88,7 @@ private:
 
     // input chain (mono)
     DelayLine predelay;
+    float dcR = 0.0f, dcX1 = 0.0f, dcY1 = 0.0f; // input DC blocker (kDcBlockHz), after predelay
     float bandwidthLp = 0.0f;
     DelayLine inAp1, inAp2, inAp3, inAp4;
 

@@ -1632,6 +1632,122 @@ int main()
         fails += finite ? 0 : 1;
     }
 
+    // ---- DC / sub-bass runaway (agent-wiki/gotchas.md "DC / sub-bass runaway") ----
+    // dc1) the real revFeed loop (engine -> PlateReverb -> aux) at max decay/revFeed. The
+    // reverb's gain peaks at DC/sub, so before the fix bins 0-2 (0-23 Hz, never fed by the
+    // input) grew from float noise to the soft ceiling (~0.9 each) within ~30 s: a DC offset
+    // + rumble that the limiter then ducked everything else under. Now bin 0 is never held
+    // and aux injection is cut below 20-40 Hz, so they must stay ~0.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        PlateReverb rv; rv.prepare (sr);
+        rv.setParams (1.0f, 1.0f, 0.3f, 0.0f, 0.0f);
+        SpectralEngine::Params a; a.feed = 0.5f; a.loss = 0.2f; a.revFeed = 1.0f;
+        std::vector<float> in (block), aux (block, 0.0f), out (block), wl (block), wr (block);
+        juce::Random rng (11);
+        double ph1 = 0.0, ph2 = 0.0;
+        const int inputBlocks = (int) (10.0 * sr / block), totalBlocks = (int) (40.0 * sr / block);
+        const int meanFrom = (int) (30.0 * sr / block);
+        double sum = 0.0, sq = 0.0; long cnt = 0;
+        bool finite = true;
+        for (int blk = 0; blk < totalBlocks; ++blk)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                float x = 0.0f;
+                if (blk < inputBlocks)
+                {
+                    ph1 += 2.0 * M_PI * 220.0 / sr; ph2 += 2.0 * M_PI * 331.0 / sr;
+                    x = 0.2f * (float) std::sin (ph1) + 0.1f * (float) std::sin (ph2)
+                      + 0.05f * (rng.nextFloat() * 2.0f - 1.0f);
+                }
+                in[(size_t) i] = x;
+            }
+            e.process (in.data(), aux.data(), out.data(), block, a);
+            if (! finiteAll (out.data(), block)) { finite = false; break; }
+            rv.process (out.data(), wl.data(), wr.data(), block);
+            for (int i = 0; i < block; ++i)
+                aux[(size_t) i] = 0.5f * (wl[(size_t) i] + wr[(size_t) i]);
+            if (blk >= meanFrom)
+                for (int i = 0; i < block; ++i)
+                {
+                    sum += out[(size_t) i]; sq += (double) out[(size_t) i] * out[(size_t) i]; ++cnt;
+                }
+        }
+        std::vector<float> mag, ph;
+        int n = 0;
+        for (int t = 0; t < 8 && n == 0 && finite; ++t)
+        {
+            e.process (in.data(), aux.data(), out.data(), block, a);
+            n = e.copyDisplay (mag, ph);
+        }
+        const float refFreq = (float) sr / 4096.0f;
+        float maxSub = 0.0f;
+        for (int k = 0; k < n && (float) k * refFreq < 20.0f; ++k)
+            maxSub = juce::jmax (maxSub, mag[(size_t) k]);
+        const double dc = cnt > 0 ? sum / (double) cnt : 0.0;
+        const double outRms = cnt > 0 ? std::sqrt (sq / (double) cnt) : 0.0;
+        bool ok = finite && n > 0 && mag[0] == 0.0f && maxSub < 0.05f
+               && std::abs (dc) < 5.0e-3 * juce::jmax (outRms, 1.0e-3);
+        printf ("[%s] revFeed loop: no DC/sub runaway: bin0=%.4f maxSub20Hz=%.4f outDC=%+.2e outRms=%.3f\n",
+                ok ? "PASS" : "FAIL", n > 0 ? mag[0] : -1.0f, maxSub, dc, outRms);
+        fails += ok ? 0 : 1;
+    }
+
+    // dc2) DC in the live input at loss=0 (eternal hold): bin 0 used to integrate it forever
+    // and the engine output carried a growing offset (0.2 in -> mean 8.1 after 20 s, 68% of
+    // the RMS). Now bin 0 is never held and the output passes a 5 Hz DC blocker. The held
+    // state itself still grows linearly at loss=0 (documented, bounded by the limiter), and a
+    // sliver of the DC leaks into bin 1 (Hann), so check the offset RELATIVE to the signal.
+    {
+        SpectralEngine e; e.prepare (sr, 13); e.setOrder (12); e.reset();
+        SpectralEngine::Params a; a.feed = 1.0f; a.loss = 0.0f;
+        std::vector<float> in (block), out (block);
+        double phase = 0.0;
+        const int totalBlocks = (int) (20.0 * sr / block), meanFrom = (int) (15.0 * sr / block);
+        double sum = 0.0, sq = 0.0; long cnt = 0;
+        bool finite = true;
+        for (int blk = 0; blk < totalBlocks; ++blk)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                phase += 2.0 * M_PI * 440.0 / sr;
+                in[(size_t) i] = 0.2f + 0.3f * (float) std::sin (phase);
+            }
+            e.process (in.data(), out.data(), block, a);
+            if (! finiteAll (out.data(), block)) { finite = false; break; }
+            if (blk >= meanFrom)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    sum += out[(size_t) i]; sq += (double) out[(size_t) i] * out[(size_t) i]; ++cnt;
+                }
+            }
+        }
+        const double dc = cnt > 0 ? sum / (double) cnt : 0.0;
+        const double tailRms = cnt > 0 ? std::sqrt (sq / (double) cnt) : 0.0;
+        bool ok = finite && tailRms > 0.05 && std::abs (dc) < 5.0e-3 * tailRms;
+        printf ("[%s] DC input at loss=0 is not held: outDC=%+.2e tailRms=%.3f (ratio %.1e)\n",
+                ok ? "PASS" : "FAIL", dc, tailRms, tailRms > 0.0 ? std::abs (dc) / tailRms : 0.0);
+        fails += ok ? 0 : 1;
+    }
+
+    // dc3) PlateReverb input DC blocker: the tank's DC gain is several x at max decay, so a
+    // constant input used to come out as an amplified DC wet. Now the wet mean must be ~0.
+    {
+        PlateReverb rv; rv.prepare (sr);
+        rv.setParams (1.0f, 1.0f, 0.3f, 0.0f, 0.0f);
+        const int n = (int) (10.0 * sr);
+        std::vector<float> x ((size_t) n, 0.1f), wl ((size_t) n), wr ((size_t) n);
+        rv.process (x.data(), wl.data(), wr.data(), n);
+        double sum = 0.0; const int from = (int) (5.0 * sr);
+        for (int i = from; i < n; ++i) sum += 0.5 * (wl[(size_t) i] + wr[(size_t) i]);
+        const double dc = sum / (double) (n - from);
+        bool ok = finiteAll (wl.data(), n) && std::abs (dc) < 1.0e-3;
+        printf ("[%s] PlateReverb blocks DC: wetDC=%+.2e (input 0.1)\n", ok ? "PASS" : "FAIL", dc);
+        fails += ok ? 0 : 1;
+    }
+
     // ---- output limiter (Threshold + Release params, agent-wiki/plan-fixes.md §4) ----
     // The limiter lives in PluginProcessor, not the engine, so this replicates its exact
     // envelope math (5 lines, mirrored from processBlock) against a synthetic peak train

@@ -145,6 +145,9 @@ private:
     std::vector<float> inRing, outRing;
     int inWrite = 0, outRead = 0, hopCount = 0;
 
+    // one-pole DC blocker on the output (see kDcBlockHz in the .cpp); dcR set in prepare()
+    float dcR = 0.0f, dcX1 = 0.0f, dcY1 = 0.0f;
+
     // Aux (reverb-feedback) input ring: shares inWrite so the aux frame is sample-aligned
     // with the analysis frame by construction. See Params::revFeed.
     std::vector<float> auxRing;

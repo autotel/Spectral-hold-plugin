@@ -67,6 +67,28 @@ Read this before "fixing" something that looks wrong — it probably isn't.
 - **Loss = 0 means eternal hold** (`decay = 1.0`). With `feed > 0` and a steady input,
   magnitudes can grow — that's real feedback, bounded by the limiter. Not a bug.
 
+## DC / sub-bass runaway (was a real "channel chokes after ~10 min" bug)
+- **Symptom:** with the reverb on (esp. `revFeed` > 0, high Decay, low/zero Loss), after
+  minutes the output fills with a DC offset + 10–40 Hz rumble; the limiter ducks all real
+  content under it, and downstream plugins choke on the DC.
+- **Cause (3 parts):** (1) `PlateReverb`'s tank passes DC with its *highest* gain (~7× at
+  max decay — allpasses and the damping LP are unity at DC, the loop recirculates it, the
+  signed output taps don't cancel), so the revFeed loop (engine → reverb → aux → engine)
+  had loop gain > 1 exactly at the DC/sub bins, which then grew *exponentially from float
+  noise* — nothing for minutes, then they sit at the aux soft ceiling. (2) The engine held
+  bin 0 like any tone: a 0 Hz phasor is a DC offset, and at `loss = 0` it integrated any
+  input DC forever (0.2 DC in → output mean 8.1 after 20 s). (3) No DC/sub filtering
+  anywhere in the loop.
+- **Fix (don't remove any of these):** bin 0 is never held (zeroed every frame, the main
+  per-bin loop starts at `k = 1`); aux injection is faded out below 20→40 Hz
+  (`auxLowCut`, `kAuxCutLoHz/HiHz`); the engine output passes a one-pole 5 Hz DC blocker
+  (`kDcBlockHz`, state `dcX1/dcY1`, reset in `reset()`); `PlateReverb` has its own 5 Hz DC
+  blocker on the input, after the predelay. Tests: the three `dc*` cases in `test_main.cpp`.
+- A sliver of input DC still leaks into bin 1 through the Hann window and is held there at
+  ω≈0; the 5 Hz blocker removes the static part. At `loss = 0` with constant DC input the
+  held level still grows linearly (see "Loss = 0 means eternal hold"), so a tiny residual
+  offset remains (~0.07 % of the signal RMS) — expected, and why `dc2` checks it relative.
+
 ## Limiter
 - Lives in `PluginProcessor`, **linked across channels** (one gain for both) to keep the
   image. Per-engine limiting would smear stereo.
@@ -158,6 +180,8 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   new proxy metric.
 - Reverb lives in `PluginProcessor` (cross-channel, mono-summed), not per-engine — same
   category as the limiter.
+- **The reverb input has a 5 Hz DC blocker** (after the predelay, before the bandwidth LP).
+  The Dattorro tank amplifies DC several × at high decay; see "DC / sub-bass runaway".
 - **`revFeed` exists again, done right** (agent-wiki/plan-roadmap.md Part A). The *original*
   version was removed because it was inaudible: the re-injected wet entered the engine
   through the same input path as live audio, scaled by the **Feed** knob — with Feed
