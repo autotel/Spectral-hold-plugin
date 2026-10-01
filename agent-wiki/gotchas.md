@@ -28,6 +28,13 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   etc.). Adding a 5th tab means re-tagging: the *new* last tab gets `"tab-last"`, the old
   last one becomes `"tab-mid"`.
 
+- **Editor scale: read `proc.getEditorScale()` before `setResizeLimits`** (was a real
+  "always opens at minimum size" bug). `setResizeLimits` clamps the still-0x0 editor to the
+  645x435 minimum, which fires `resized()`, which writes `editorScale = 0.75` back to the
+  processor — so the later `setSize(860 * getEditorScale())` always used 0.75 and the
+  persisted B8 scale was never restored. The constructor now captures `savedScale` first.
+  Found by the offscreen screenshot target (build-and-test.md), not by reasoning.
+
 ## Host parameter display text
 - **`AudioParameterFloat` defaults to 7 decimal places whenever `NormalisableRange::interval`
   is 0** (true for every continuous knob — the interval is only nonzero if you explicitly
@@ -42,6 +49,10 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   `shapeValueToString` (curve names, e.g. `"Sigmoid"`, `"Level>Sigmoid"` mid-crossfade). Not
   a generic formatter; don't try to unify it with the others, the crossfade text is specific
   to how the shaper's 5 curves blend into each other.
+- **Don't `setTextValueSuffix` on an APVTS-attached knob whose param already has a unit.**
+  `SliderAttachment` shows the parameter's own text (which now includes the unit), so an
+  editor-side suffix doubles it — Transpose/Glide read `"5 st st"`/`"0 ms ms"` until the
+  suffixes were removed. Only non-parameter sliders (Brush's `" oct"`) need a suffix.
 
 ## DSP
 - **Filter and Compress were removed** (see [plan-spectral-shaper.md](plan-spectral-shaper.md)),

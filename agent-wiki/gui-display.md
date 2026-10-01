@@ -196,7 +196,8 @@ above is actually presented on screen.
   by the fact that `display`'s own bounds don't change no matter the window's actual size).
 - **Persistence**: `editorScale` (GUI-only float, like `liveMode`/`uiTab`/`keepSound`) saved
   in `get/setStateInformation`, restored via `setSize (860*s, 580*s)` in the editor ctor
-  *before* `setResizable`/`setResizeLimits` are wired up. Range 0.75..2.0, matching
+  using a scale captured *before* `setResizeLimits` (which clamps the 0x0 editor and
+  overwrites `editorScale` through `resized()` — see gotchas.md). Range 0.75..2.0, matching
   `setResizeLimits (645, 435, 1720, 1160)` (645/860 = 0.75, 1720/860 = 2.0).
 - **Aspect ratio locked**: `getConstrainer()->setFixedAspectRatio (860.0/580.0)` — dragging a
   corner can't produce a non-860:580 window, so `getWidth()/860` and `getHeight()/580` always

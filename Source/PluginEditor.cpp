@@ -44,9 +44,7 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     // gets a widget (it had none since B5 -- the utility row was already full). Phase Noise
     // moves here too, off the utility row.
     setupKnob (transpose,      "transpose",      "Transpose");
-    transpose.slider.setTextValueSuffix (" st");
     setupKnob (transposeGlide, "transposeGlide", "Glide");
-    transposeGlide.slider.setTextValueSuffix (" ms");
     setupKnob (spread,         "spread",         "Spread");
     setupKnob (phaseNoise,     "phaseNoiseAmt",  "Phase Noise");
 
@@ -220,11 +218,14 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
 
     // Resizable editor (agent-wiki/plan-roadmap.md B8): fixed 860x580 aspect ratio, scaled
     // as a whole (content's transform in resized()); editorScale is GUI-only persisted
-    // state, same pattern as liveMode/uiTab/keepSound.
+    // state, same pattern as liveMode/uiTab/keepSound. Read the saved scale BEFORE
+    // setResizeLimits: that call clamps the still-0x0 editor up to the 645x435 minimum, and
+    // the resulting resized() overwrites editorScale with 0.75.
+    const float savedScale = proc.getEditorScale();
     setResizable (true, true);
     setResizeLimits (645, 435, 1720, 1160);
     getConstrainer()->setFixedAspectRatio (860.0 / 580.0);
-    setSize ((int) (860.0f * proc.getEditorScale()), (int) (580.0f * proc.getEditorScale()));
+    setSize ((int) (860.0f * savedScale), (int) (580.0f * savedScale));
 }
 
 SpectralHoldEditor::~SpectralHoldEditor()

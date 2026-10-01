@@ -48,7 +48,7 @@ public:
     // - liveMode: report 0 latency (PDC) so the host doesn't delay-compensate, for live use.
     void setLiveMode (bool b);
     bool getLiveMode() const      { return liveMode; }
-    // Active editor tab (0 shaper, 1 harmonize, 2 reverb). GUI-only, persisted in state.
+    // Active editor tab (0 shaper, 1 harmonize, 2 alter, 3 reverb). GUI-only, persisted in state.
     void setUiTab (int t) { uiTab = t; }
     int  getUiTab() const { return uiTab; }
 
