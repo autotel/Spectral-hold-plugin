@@ -111,6 +111,7 @@ SpectralHoldProcessor::SpectralHoldProcessor()
     pPhaseNoise = apvts.getRawParameterValue ("phaseNoiseAmt");
     pTranspose  = apvts.getRawParameterValue ("transpose");
     pTransposeSnap  = apvts.getRawParameterValue ("transposeSnap");
+    pMidiIgnore     = apvts.getRawParameterValue ("midiIgnore");
     pTransposeGlide = apvts.getRawParameterValue ("transposeGlide");
     pSpread     = apvts.getRawParameterValue ("spread");
     pLimThreshold = apvts.getRawParameterValue ("limThreshold");
@@ -151,10 +152,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
     //                accepted compromise to hit 8/8/8)
     //   P3 "Space":  harmWidth, harmonic, revMix, revDecay, revDamp, revSize,
     //                revPredelay, revMetal
-    //   P4 "Perform" (partial, agent-wiki/plan-uifix.md U3): transpose, transposeSnap,
-    //                transposeGlide, spread, phaseNoiseAmt, revFeed (+ morph if B11 lands)
-    //                -- 6/8, accepted partial page. transposeSnap/transposeGlide inserted
-    //                right after transpose so the transpose group stays together.
+    //   P4 "Alter" (partial, agent-wiki/plan-uifix.md U3): transpose,
+    //                transposeSnap, transposeGlide, midiIgnore, spread, phaseNoiseAmt,
+    //                revFeed (+ morph if B11 lands) -- 7/8, accepted partial page.
+    //                transposeSnap/transposeGlide/midiIgnore inserted right after transpose
+    //                so the transpose group stays together.
     // Parameter IDs are unchanged by this grouping -- state restores by ID, not index.
 
     // --- P1: Hold ---
@@ -299,6 +301,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectralHoldProcessor::creat
         NormalisableRange<float> (0.0f, 2000.0f, 0.0f, 0.35f), 0.0f,
         withNumberText (AudioParameterFloatAttributes(), "ms")));
 
+    // Ignore MIDI note (Alter tab): when on, incoming note-ons/offs never transpose the
+    // held tone -- the Transpose knob is the only pitch control. Default ON: a plugin on a
+    // MIDI-fed track should not silently re-pitch the hold just because notes are passing
+    // through. Off restores the B3 behaviour (middle C = no shift).
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "midiIgnore", 1 }, "Ignore MIDI Note", true));
+
     // Stereo spread (agent-wiki/plan-roadmap.md B5): momentary per-bin L/R gain, never
     // touches the held state. spread=0 is a no-op on both mono and stereo buses.
     layout.add (std::make_unique<AudioParameterFloat> (
@@ -386,13 +395,23 @@ void SpectralHoldProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     // Transpose MIDI (agent-wiki/plan-roadmap.md B3): monophonic, last-note priority; a
     // note-off only clears midiNote if it matches the currently held note (so releasing an
     // older, already-superseded note doesn't cancel the newer one).
-    for (const auto meta : midi)
+    // midiIgnore (Alter tab, default on) gates the whole thing: no note tracking at all,
+    // and any note held from before the toggle flipped is dropped, so re-enabling MIDI
+    // starts from the knob's pitch rather than a stale note.
+    if (pMidiIgnore->load() > 0.5f)
     {
-        const auto msg = meta.getMessage();
-        if (msg.isNoteOn())
-            midiNote = msg.getNoteNumber();
-        else if (msg.isNoteOff() && msg.getNoteNumber() == midiNote)
-            midiNote = -1;
+        midiNote = -1;
+    }
+    else
+    {
+        for (const auto meta : midi)
+        {
+            const auto msg = meta.getMessage();
+            if (msg.isNoteOn())
+                midiNote = msg.getNoteNumber();
+            else if (msg.isNoteOff() && msg.getNoteNumber() == midiNote)
+                midiNote = -1;
+        }
     }
 
     SpectralEngine::Params p;
@@ -621,7 +640,7 @@ void SpectralHoldProcessor::setStateInformation (const void* data, int size)
             param->setValueNotifyingHost (0.3f); // 0..1 range, so 0.3 of range == 0.3
 
     setLiveMode    ((bool) tree.getProperty ("liveMode", false));
-    uiTab         = juce::jlimit (0, 3, (int) tree.getProperty ("uiTab", 0)); // 3 = Perform (U3)
+    uiTab         = juce::jlimit (0, 3, (int) tree.getProperty ("uiTab", 0)); // 2 = Alter, 3 = Reverb
     keepSound     = (bool) tree.getProperty ("keepSound", true);
     setEditorScale ((float) tree.getProperty ("editorScale", 1.0f));
 

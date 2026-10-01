@@ -287,7 +287,7 @@ gives a fixed, repeatable L/R pattern rather than noise. Per-channel gain
 `spreadSign` is `+1`/`−1` set by the processor per engine (channel 0 / 1), and it also forces
 `spread=0` on a mono bus (no second channel to spread against). Applied after `gOut`, before
 the bin is written to `fftData`/`synthScratch` — same insertion point for the transposing and
-non-transposing paths. GUI knob on the Perform tab (agent-wiki/plan-uifix.md U3; had no
+non-transposing paths. GUI knob on the Alter tab (agent-wiki/plan-uifix.md U3; had no
 widget at all from B5 until then) — see [parameters.md](parameters.md).
 
 ## East–West location field (continuous tone locations, plan v2 + location layers)

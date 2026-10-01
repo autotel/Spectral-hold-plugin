@@ -33,12 +33,17 @@ showing. This is deliberate: if the tab gated visibility, a modifier could be ar
 tab you're not looking at with no visual sign of it. The active tab (`uiTab`, persisted
 like `fftOrder`) only controls which knob row is shown — it no longer touches the display.
 
-## Perform tab (agent-wiki/plan-uifix.md U3)
-`PluginEditor.{h,cpp}`, not `SpectrumDisplay` — noted here since it's the fourth tab
-alongside Shaper/Harmonize/Reverb, same radio-toggle pattern (`setActiveTab`, 0..3 now
-instead of 0..2). Holds **Transpose, Glide, Spread, Phase Noise** knobs plus a latching
-**Snap** toggle button (carved from the row's right edge, same pattern the old Freeze
-button used) — all four knobs share the tabbed-row area exactly like the other three tabs'
+## Alter tab (agent-wiki/plan-uifix.md U3; called "Perform" until the rename)
+`PluginEditor.{h,cpp}`, not `SpectrumDisplay` — noted here since it's the fourth tab, same
+radio-toggle pattern (`setActiveTab`, 0..3 now instead of 0..2). Strip order is **Shaper |
+Harmonize | Alter | Reverb**, i.e. Alter is index **2** and Reverb index **3** (the rename
+moved Alter ahead of Reverb; `uiTab` persists a bare int, so a pre-rename session reopens on
+the other of those two — cosmetic, no migration). Holds **Transpose, Glide, Spread, Phase
+Noise** knobs plus a latching **Snap** toggle button and the **MIDI Ignore/Follow** switch
+(both carved from the row's right edge, same pattern the old Freeze button used; the switch
+is a `VerticalToggle` ported from `../lanes-audio-plugin`, a plain `Component` driven by a
+raw `ParameterAttachment` on `midiIgnore` rather than a `ButtonAttachment`) — all four knobs
+share the tabbed-row area exactly like the other three tabs'
 knob rows do. Transpose was a utility-row linear slider before U3 despite its large sonic
 impact; Spread had no widget at all since B5. Moving both here (plus Phase Noise, previously
 also a utility-row slider) is what actually freed up the utility row — **not** B8's
@@ -182,7 +187,7 @@ above is actually presented on screen.
   later window resize only touches the transform. Consequence: resizing the window makes
   everything uniformly bigger/smaller — it does **not** create more logical layout room at
   any window size (the actual fix for a cramped row was giving it a tab of its own — see
-  "Perform tab" below).
+  the Alter tab, formerly "Perform", below).
 - **Mouse coordinates just work.** JUCE maps `MouseEvent` positions through a component's
   `AffineTransform` automatically, so `SpectrumDisplay`'s brush math (`xToFreq`/`yToStrength`,
   driven by its own `getWidth()`/`getHeight()`, fixed at content's logical size) needed zero

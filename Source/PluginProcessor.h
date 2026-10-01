@@ -123,6 +123,7 @@ private:
     std::atomic<float>* pPhaseNoise = nullptr;
     std::atomic<float>* pTranspose = nullptr; // agent-wiki/plan-roadmap.md B3
     std::atomic<float>* pTransposeSnap  = nullptr; // agent-wiki/plan-uifix.md U3
+    std::atomic<float>* pMidiIgnore     = nullptr; // Alter tab: gate MIDI note transposition
     std::atomic<float>* pTransposeGlide = nullptr; // agent-wiki/plan-uifix.md U3
     std::atomic<float>* pSpread = nullptr; // agent-wiki/plan-roadmap.md B5
     int midiNote = -1; // last held note-on (monophonic, last-note priority); audio thread only

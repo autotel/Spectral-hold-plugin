@@ -47,9 +47,12 @@ held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, 
 - [plan-uifix.md](plan-uifix.md) — plan (implemented) for the UI/display fix batch
   (`exp/uifix`, branched off `exp/roadmap`): split-stereo display (L up / R down from
   centre, fixes the "ribbed" max-merge), location strip shows live recording/steal state
-  (redundant E–W marker line removed), and a fourth "Perform" tab (Transpose knob + snap
-  toggle `transposeSnap` + glide-time knob `transposeGlide` for portamento on knob moves and
-  MIDI note-ons, Phase Noise knob, Spread knob) keeping P4's host page coherent.
+  (redundant E–W marker line removed), and a fourth tab — "Alter" (named "Perform" in U3,
+  renamed and moved ahead of Reverb when the MIDI gate landed) — carrying a Transpose knob
+  + snap toggle `transposeSnap` + glide-time knob `transposeGlide` for portamento on knob moves and
+  MIDI note-ons, Phase Noise knob, Spread knob, and the Ignore/Follow MIDI switch
+  (`midiIgnore`, default Ignore — a `VerticalToggle` ported from `../lanes-audio-plugin`)
+  keeping P4's host page coherent.
 - [plan-loclayers.md](plan-loclayers.md) — plan (implemented) for **location layers**
   (`exp/loclayers`): K=4 parallel held states so the same frequency can coexist at
   multiple E–W locations — fixes the "re-recording a pitch elsewhere steals/drags it"

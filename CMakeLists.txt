@@ -27,7 +27,8 @@ target_sources(SpectralHold PRIVATE
     Source/SpectralEngine.cpp
     Source/PlateReverb.cpp
     Source/SpectrumDisplay.cpp
-    Source/SpectralLookAndFeel.cpp)
+    Source/SpectralLookAndFeel.cpp
+    Source/VerticalToggle.cpp)
 
 target_compile_definitions(SpectralHold PUBLIC
     JUCE_WEB_BROWSER=0

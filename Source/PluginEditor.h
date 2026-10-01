@@ -5,6 +5,7 @@
 #include "SpectrumDisplay.h"
 #include "SpectralLookAndFeel.h"
 #include "Presets.h"
+#include "VerticalToggle.h"
 
 class SpectralHoldEditor : public juce::AudioProcessorEditor,
                             private juce::AudioProcessorValueTreeState::Listener
@@ -45,7 +46,7 @@ private:
     };
 
     void setupKnob (Knob&, const juce::String& paramId, const juce::String& text);
-    void setActiveTab (int tabIndex); // 0 = Shaper, 1 = Harmonize, 2 = Reverb, 3 = Perform
+    void setActiveTab (int tabIndex); // 0 = Shaper, 1 = Harmonize, 2 = Alter, 3 = Reverb
     void setInfo (juce::Component&, const juce::String& description);
 
     // Resizable editor (agent-wiki/plan-roadmap.md B8): all children live inside `content`,
@@ -77,14 +78,21 @@ private:
     Knob harmonize, harmWidth, harmonic;
     Knob revMix, revDecay, revDamp, revSize, revPredelay, revMetal, revFeed;
 
-    // Perform tab (agent-wiki/plan-uifix.md U3): Transpose (+Snap toggle, +Glide), Spread,
-    // Phase Noise -- replaces the old utility-row Transpose/Phase Noise sliders.
+    // Alter tab (agent-wiki/plan-uifix.md U3, renamed from "Perform"): Transpose (+Snap
+    // toggle, +Glide, +MIDI ignore switch), Spread, Phase Noise -- replaces the old
+    // utility-row Transpose/Phase Noise sliders.
     Knob transpose, transposeGlide, spread, phaseNoise;
     juce::TextButton snapButton { "Snap" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> snapAttach;
 
-    juce::TextButton shaperTab { "Shaper" }, harmonizeTab { "Harmonize" }, reverbTab { "Reverb" },
-                      performTab { "Perform" };
+    // MIDI note gate: the two-position vertical switch ported from ../lanes-audio-plugin.
+    // Not a juce::Button, so it uses a raw ParameterAttachment rather than a
+    // ButtonAttachment. State 0 = Ignore (the parameter default), 1 = Follow.
+    VerticalToggle midiToggle { juce::StringArray { "Ignore", "Follow" } };
+    std::unique_ptr<juce::ParameterAttachment> midiAttach;
+
+    juce::TextButton shaperTab { "Shaper" }, harmonizeTab { "Harmonize" }, alterTab { "Alter" },
+                      reverbTab { "Reverb" };
     int activeTab = 0;
 
     // Preset picker (agent-wiki/plan-roadmap.md B9): lives at the right end of the tab

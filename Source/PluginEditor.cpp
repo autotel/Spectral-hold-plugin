@@ -37,7 +37,8 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setupKnob (revMetal,    "revMetal",    "Metal");
     setupKnob (revFeed,     "revFeed",     "Feed");
 
-    // Perform tab (agent-wiki/plan-uifix.md U3): Transpose was a tiny utility-row slider
+    // Alter tab (agent-wiki/plan-uifix.md U3; "Perform" until the Alter rename): Transpose
+    // was a tiny utility-row slider
     // despite its big sonic impact -- now a knob, with a Snap toggle (discrete semitones)
     // and a Glide knob (portamento, knob moves and MIDI note-ons alike). Spread finally
     // gets a widget (it had none since B5 -- the utility row was already full). Phase Noise
@@ -54,14 +55,31 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     snapAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         proc.apvts, "transposeSnap", snapButton);
 
+    // MIDI note gate (default = Ignore): ported switch from ../lanes-audio-plugin. The
+    // attachment maps parameter true (ignore) -> state 0, false (follow) -> state 1, and
+    // begin/endGesture bracket the click so the host records a clean automation edit.
+    content.addAndMakeVisible (midiToggle);
+    if (auto* midiParam = proc.apvts.getParameter ("midiIgnore"))
+    {
+        midiAttach = std::make_unique<juce::ParameterAttachment> (
+            *midiParam,
+            [this] (float v) { midiToggle.setState (v > 0.5f ? 0 : 1); },
+            nullptr);
+        midiAttach->sendInitialUpdate();
+        midiToggle.onStateChanged = [this] (int state)
+        {
+            midiAttach->setValueAsCompleteGesture (state == 0 ? 1.0f : 0.0f);
+        };
+    }
+
     // tab strip (radio-style toggles switching the visible knob row). Component IDs drive
     // SpectralLookAndFeel::drawButtonBackground's segmented-flat-corner style: only the
     // strip's outer edges round, not every button.
     shaperTab.setComponentID    ("tab-first");
     harmonizeTab.setComponentID ("tab-mid");
-    reverbTab.setComponentID    ("tab-mid");
-    performTab.setComponentID   ("tab-last");
-    for (auto* t : { &shaperTab, &harmonizeTab, &reverbTab, &performTab })
+    alterTab.setComponentID     ("tab-mid");
+    reverbTab.setComponentID    ("tab-last");
+    for (auto* t : { &shaperTab, &harmonizeTab, &alterTab, &reverbTab })
     {
         t->setClickingTogglesState (true);
         t->setRadioGroupId (1001);
@@ -69,8 +87,8 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     }
     shaperTab.onClick    = [this] { if (shaperTab.getToggleState())    setActiveTab (0); };
     harmonizeTab.onClick = [this] { if (harmonizeTab.getToggleState()) setActiveTab (1); };
-    reverbTab.onClick    = [this] { if (reverbTab.getToggleState())    setActiveTab (2); };
-    performTab.onClick   = [this] { if (performTab.getToggleState())   setActiveTab (3); };
+    alterTab.onClick     = [this] { if (alterTab.getToggleState())     setActiveTab (2); };
+    reverbTab.onClick    = [this] { if (reverbTab.getToggleState())    setActiveTab (3); };
 
     // FFT size: GUI-only (not a DAW parameter).
     content.addAndMakeVisible (sizeBox);
@@ -187,15 +205,16 @@ SpectralHoldEditor::SpectralHoldEditor (SpectralHoldProcessor& p)
     setInfo (keepButton,        "Save the held sound inside the session, so it's still ringing when the project reopens.");
     setInfo (undoButton,        "Revert the held sound to before the last brush stroke or permanent-shaper engagement.");
     setInfo (brushSizeSlider,   "Drag on the display to boost/cut held tones. This sets the brush width.");
-    setInfo (transpose.slider,  "Pitch-shift the held sound (semitones), non-destructively. MIDI notes add to this, relative to middle C. Snap quantises to whole semitones; Glide smooths any pitch change, including MIDI note-ons, into a portamento.");
+    setInfo (transpose.slider,  "Pitch-shift the held sound (semitones), non-destructively. With the MIDI switch on Follow, notes add to this, relative to middle C. Snap quantises to whole semitones; Glide smooths any pitch change, including MIDI note-ons, into a portamento.");
     setInfo (snapButton,        "Discrete transposition: snap the knob to whole semitones. MIDI notes are always discrete.");
+    setInfo (midiToggle,        "Ignore: incoming MIDI notes never transpose the held tone (default). Follow: notes transpose it, relative to middle C.");
     setInfo (transposeGlide.slider, "Portamento time for pitch changes -- knob moves and MIDI note-ons alike. 0 = instant.");
     setInfo (spread.slider,     "Momentary per-bin left/right spread of the output. Never enters the held sound.");
     setInfo (phaseNoise.slider, "Shimmer: random per-frame phase jitter. Never detunes permanently.");
     setInfo (shaperTab,         "Per-bin amplitude shaping: tilts, combs and more.");
     setInfo (harmonizeTab,      "Coupled-oscillator pitch interaction between held tones.");
+    setInfo (alterTab,          "Transpose, MIDI note gate, Spread and Phase Noise -- controls that alter the held sound as you play.");
     setInfo (reverbTab,         "Plate reverb on the output.");
-    setInfo (performTab,        "Transpose, Spread and Phase Noise -- performance controls.");
 
     setActiveTab (proc.getUiTab()); // restore the last shown tab (persisted in state)
 
@@ -294,7 +313,7 @@ void SpectralHoldEditor::setActiveTab (int tabIndex)
     Knob* shaperKnobs[]    = { &shapeAmt, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel, &shapeMode };
     Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
     Knob* reverbKnobs[]    = { &revMix, &revDecay, &revDamp, &revSize, &revPredelay, &revMetal, &revFeed };
-    Knob* performKnobs[]   = { &transpose, &transposeGlide, &spread, &phaseNoise };
+    Knob* alterKnobs[]     = { &transpose, &transposeGlide, &spread, &phaseNoise };
 
     auto show = [] (Knob* const* ks, int n, bool visible)
     {
@@ -306,14 +325,15 @@ void SpectralHoldEditor::setActiveTab (int tabIndex)
     };
     show (shaperKnobs,    7, tabIndex == 0);
     show (harmonizeKnobs, 3, tabIndex == 1);
-    show (reverbKnobs,    7, tabIndex == 2);
-    show (performKnobs,   4, tabIndex == 3);
-    snapButton.setVisible (tabIndex == 3);
+    show (alterKnobs,     4, tabIndex == 2);
+    show (reverbKnobs,    7, tabIndex == 3);
+    snapButton.setVisible (tabIndex == 2);
+    midiToggle.setVisible (tabIndex == 2);
 
     shaperTab.setToggleState    (tabIndex == 0, juce::dontSendNotification);
     harmonizeTab.setToggleState (tabIndex == 1, juce::dontSendNotification);
-    reverbTab.setToggleState    (tabIndex == 2, juce::dontSendNotification);
-    performTab.setToggleState   (tabIndex == 3, juce::dontSendNotification);
+    alterTab.setToggleState     (tabIndex == 2, juce::dontSendNotification);
+    reverbTab.setToggleState    (tabIndex == 3, juce::dontSendNotification);
 }
 
 void SpectralHoldEditor::paint (juce::Graphics& g)
@@ -372,8 +392,8 @@ void SpectralHoldEditor::layoutContent()
     const int tw = tabs.getWidth() / 4;
     shaperTab.setBounds    (tabs.removeFromLeft (tw).reduced (2, 0));
     harmonizeTab.setBounds (tabs.removeFromLeft (tw).reduced (2, 0));
-    reverbTab.setBounds    (tabs.removeFromLeft (tw).reduced (2, 0));
-    performTab.setBounds   (tabs.reduced (2, 0));
+    alterTab.setBounds     (tabs.removeFromLeft (tw).reduced (2, 0));
+    reverbTab.setBounds    (tabs.reduced (2, 0));
 
     // tabbed row: all four share the same area; visibility picks the active one
     // (layoutRow takes its area by value, so each call below works on its own copy of
@@ -381,26 +401,32 @@ void SpectralHoldEditor::layoutContent()
     Knob* shaperKnobs[]    = { &shapeAmt, &shape, &shapeFreq, &shapeWidth, &shapeCount, &shapeLevel, &shapeMode };
     Knob* harmonizeKnobs[] = { &harmonize, &harmWidth, &harmonic };
     Knob* reverbKnobs[]    = { &revMix, &revDecay, &revDamp, &revSize, &revPredelay, &revMetal, &revFeed };
-    Knob* performKnobs[]   = { &transpose, &transposeGlide, &spread, &phaseNoise };
+    Knob* alterKnobs[]     = { &transpose, &transposeGlide, &spread, &phaseNoise };
     layoutRow (controls, shaperKnobs,    7);
     layoutRow (controls, harmonizeKnobs, 3);
     layoutRow (controls, reverbKnobs,    7);
-    // Perform (agent-wiki/plan-uifix.md U3): Snap toggle carved from the right, same
-    // pattern the old Freeze button used (commit 5805a2a); 4 knobs fill the rest -- well
-    // within the row budget the shaper tab's 7 knobs already prove out.
+    // Alter (agent-wiki/plan-uifix.md U3): Snap toggle and the MIDI switch carved from the
+    // right, same pattern the old Freeze button used (commit 5805a2a); 4 knobs fill the
+    // rest -- still within the row budget the shaper tab's 7 knobs already prove out.
     {
-        auto performArea = controls;
-        auto snapCell = performArea.removeFromRight (performArea.getWidth() / 8);
+        auto alterArea = controls;
+        const int cellW = alterArea.getWidth() / 8;
+        auto snapCell = alterArea.removeFromRight (cellW);
+        auto midiCell = alterArea.removeFromRight (cellW);
         snapButton.setBounds (snapCell.withSizeKeepingCentre (
             juce::jmax (40, snapCell.getWidth() - 8), 28));
-        layoutRow (performArea, performKnobs, 4);
+        // The switch draws its own 24px pill plus labels to its right, so it wants width,
+        // not a square cell -- hence the full cell width and a fixed 52px height.
+        midiToggle.setBounds (midiCell.withSizeKeepingCentre (
+            juce::jmax (72, midiCell.getWidth() - 8), 52));
+        layoutRow (alterArea, alterKnobs, 4);
     }
 
     // Utility row width budget (bottom is ~844px, see agent-wiki/build-and-test.md's note
     // on why this can't be visually verified here -- checked by adding up these constants
     // against bottom's actual width, not by eyeballing): right 80+50+120+44=294, left
     // 90+70+50=210, total 504 of 844 (340px margin) -- Transpose/Phase Noise moved to the
-    // Perform tab (U3), so this row is no longer tight. keepButton widened from 46 to 70 --
+    // Alter tab (U3), so this row is no longer tight. keepButton widened from 46 to 70 --
     // 46 was too narrow for its tickbox + "Keep" text (label was clipping).
     sizeBox.setBounds (bottom.removeFromRight (80));
     sizeLabel.setBounds (bottom.removeFromRight (50));

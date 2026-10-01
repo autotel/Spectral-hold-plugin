@@ -276,16 +276,25 @@ Read this before "fixing" something that looks wrong — it probably isn't.
   7 + `harmonize`'s master amount spilling into slot 8 (not `revMix` — see
   [parameters.md](parameters.md) for the current 4-page table); accepted, not a bug. As of
   agent-wiki/plan-uifix.md U3 there's a 4th, partial page too (`transpose`, `transposeSnap`,
-  `transposeGlide`, `spread`, `phaseNoiseAmt`, `revFeed` — 6/8, accepted partial).
-  `transposeSnap`/`transposeGlide` are inserted right after `transpose`, not appended at the
-  end, specifically to keep the transpose group together. P1 is 7 slots, not 8 — see below.
-- **`spread` and `transpose` moved off the utility row onto a 4th "Perform" tab**
+  `transposeGlide`, `midiIgnore`, `spread`, `phaseNoiseAmt`, `revFeed` — 7/8, accepted
+  partial). `transposeSnap`/`transposeGlide`/`midiIgnore` are inserted right after
+  `transpose`, not appended at the end, specifically to keep the transpose group together. P1 is 7 slots, not 8 — see below.
+- **The 4th tab is "Alter", and it sits *before* Reverb** (was "Perform", last in the strip).
+  Tab indices moved with it: 0 Shaper, 1 Harmonize, **2 Alter, 3 Reverb** — `uiTab` is
+  persisted as a bare int, so a session saved before the rename reopens on the *other* of
+  those two tabs. Cosmetic, one time, not worth a migration.
+- **MIDI note transposition is off by default** (`midiIgnore` = true). B3 shipped it always
+  on; a hold sitting on a MIDI-fed track was silently re-pitched by notes meant for
+  something else. The gate is in `processBlock` *before* the note-tracking loop and also
+  clears `midiNote`, so flipping to Follow never inherits a note held from before.
+- **`spread` and `transpose` moved off the utility row onto a 4th tab**
   (agent-wiki/plan-uifix.md U3). `spread` had no widget at all from B5 until U3 — the plan
   never specified one. `transpose` was a utility-row linear slider despite its large sonic
   impact; now a knob, same tab, with a Snap toggle and a Glide knob alongside it. **B8's
   resizable editor did NOT create this room** — it's a uniform visual scale of the same
   fixed 860-unit layout, no extra logical space at any window size; the actual fix was
-  giving Perform its own tab, exactly the escape hatch B5's/B6's gotchas already pointed at.
+  giving these controls their own tab, exactly the escape hatch B5's/B6's gotchas already
+  pointed at.
 - **Undo (B6) is GUI/message-thread only, never touches the audio thread's own locking.**
   `snapshotHold()`/`undoHold()` live on `SpectralHoldProcessor`, reuse B1's
   `writeHold`/`queueHoldRestore`, and store 4 in-memory blob pairs (no gzip/base64 — that's

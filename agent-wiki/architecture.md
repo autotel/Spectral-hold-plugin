@@ -17,9 +17,13 @@
   [plan-reverb.md](plan-reverb.md) for the full design.
 - `DryDelay.h` — header-only latency-aligned dry path for the global Dry/Wet mix.
 - `PluginEditor.{h,cpp}` — `AudioProcessorEditor`. Persistent performance row + a
-  **Shaper | Harmonize | Reverb** tab strip switching one shared knob row, the FFT-size
-  `ComboBox`, the spectrum display, and the hover **info bar**.
+  **Shaper | Harmonize | Alter | Reverb** tab strip switching one shared knob row, the
+  FFT-size `ComboBox`, the spectrum display, and the hover **info bar**.
 - `SpectrumDisplay.{h,cpp}` — the custom "lighting" spectrum view (its own 30 Hz timer).
+- `VerticalToggle.{h,cpp}` — two-position vertical switch (labels to the right), ported
+  from `../lanes-audio-plugin`'s `Source/UI/VerticalToggle` with this project's colours.
+  Used for the Alter tab's MIDI Ignore/Follow gate. It is a plain `Component`, not a
+  `juce::Button`, so it attaches to its parameter with a raw `ParameterAttachment`.
 - `SpectralLookAndFeel.{h,cpp}` — the dark rotary knob style. Animates a per-slider hover
   glow (own lazily-started/stopped 30 Hz timer); see gotchas.md for the teardown-order
   hazard this animation has to guard against.

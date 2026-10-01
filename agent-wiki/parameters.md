@@ -12,18 +12,21 @@ agent-wiki/plan-uifix.md U3):
   Harmonize's *master amount* closes this page — accepted so the shaper's own 7 params plus
   one harmonize knob hit exactly 8; the two harmonize *character* knobs live on page 3.
 - **P3 "Space"**: Harm Width, Harmonics (harmonic), Mix, Decay, Damp, Size, Predelay, Metal.
-- **P4 "Perform" (partial, 6/8 — see plan-uifix.md U3)**: Transpose, Transpose Snap
-  (`transposeSnap`), Transpose Glide (`transposeGlide`), Spread, Phase Noise
-  (`phaseNoiseAmt`), Reverb Feed (`revFeed`). `transposeSnap`/`transposeGlide` sit right
-  after `transpose` so the whole transpose group stays together on the page.
+- **P4 "Alter" (partial, 7/8 — see plan-uifix.md U3)**: Transpose, Transpose Snap
+  (`transposeSnap`), Transpose Glide (`transposeGlide`), Ignore MIDI Note (`midiIgnore`),
+  Spread, Phase Noise (`phaseNoiseAmt`), Reverb Feed (`revFeed`).
+  `transposeSnap`/`transposeGlide`/`midiIgnore` sit right after `transpose` so the whole
+  transpose group stays together on the page. (The tab this page mirrors was called
+  "Perform" until the Alter rename.)
 
 Parameter **IDs are unchanged** by this grouping (only `createLayout()`'s call order moved)
 — saved sessions restore by ID, so this reorder is state-compatible.
 
 **Editor layout (tabs, not a knob wall):** the display on top; a persistent performance
 row **Feed, Loss, E↔W, Dry/Wet, Output, Thresh, Release**; a tab strip **Shaper | Harmonize
-| Reverb | Perform** switching one shared knob row (Perform: Transpose, Glide, Spread,
-Phase Noise knobs + a Snap toggle — agent-wiki/plan-uifix.md U3); the utility row (Live,
+| Alter | Reverb** switching one shared knob row (Alter: Transpose, Glide, Spread,
+Phase Noise knobs + a Snap toggle + the MIDI Ignore/Follow switch — agent-wiki/plan-uifix.md
+U3, renamed from "Perform" and moved ahead of Reverb); the utility row (Live,
 Keep, Undo, Brush, FT Size — much roomier since U3 moved Transpose/Phase Noise off it, see
 `layoutContent()`'s width-budget comment); and an **info bar** at the bottom that shows a
 one-line description of whatever control the mouse is over (Ableton-style).
@@ -60,10 +63,11 @@ never snapshotted. Reuses B1's `writeHold`/`queueHoldRestore` as an in-memory ri
 | Predelay `revPredelay` | 0 .. 250 ms  | 20      | Delay before the reverb's input diffusers. |
 | Metal `revMetal`    | 0 .. 1         | 0.0     | Trades diffusion for a harder, more discrete reflection character: input diffusion gains shrink, the decay-diffusion allpass weakens, and the LFO excursion that smears the tank's resonances is scaled down to zero. See gotchas.md — the perceptual direction wasn't confirmed by a synthetic proxy, only by ear. |
 | Feed `revFeed`      | 0 .. 1         | 0.0     | Reverb → hold feedback. A second, **Feed-independent** injection path into the engine (not the main Feed knob) — the reverb's wet tail feeds the held spectrum even at Feed=0. Soft-ceilinged per bin so the closed loop (revFeed=1, Loss=0) converges instead of diverging. See [dsp-design.md](dsp-design.md#aux-input-path-reverb-feed-revfeed-agent-wikiplan-roadmapmd-part-a). |
-| Transpose `transpose` | -12 .. +12 st | 0.0   | Pitch-shifts the **output** of the held sound; the held state (`S`/`omega`) is untouched — non-destructive, reversible by ear instantly. GUI: knob on the Perform tab (agent-wiki/plan-uifix.md U3). MIDI notes add to this (note 60/middle C = no shift, monophonic last-note priority), unclamped — playing further from middle C keeps transposing further than the knob's own ±12 st range. See [dsp-design.md](dsp-design.md#transpose-agent-wikiplan-roadmapmd-b3). |
+| Transpose `transpose` | -12 .. +12 st | 0.0   | Pitch-shifts the **output** of the held sound; the held state (`S`/`omega`) is untouched — non-destructive, reversible by ear instantly. GUI: knob on the Alter tab (agent-wiki/plan-uifix.md U3). MIDI notes add to this **only when `midiIgnore` is off** (note 60/middle C = no shift, monophonic last-note priority), unclamped — playing further from middle C keeps transposing further than the knob's own ±12 st range. See [dsp-design.md](dsp-design.md#transpose-agent-wikiplan-roadmapmd-b3). |
 | Transpose Snap `transposeSnap` | bool | off | Quantises the Transpose **knob** to whole semitones (MIDI notes are always discrete regardless). Snap is applied before Glide, so a note-on glides from the previous *snapped* pitch when both are on. |
+| Ignore MIDI Note `midiIgnore` | bool | **on** | On (default): incoming note-ons/offs never transpose the held tone — the knob is the only pitch control, and any note held when the switch flips is dropped so re-enabling starts from the knob's pitch. Off: B3's MIDI transposition (middle C = no shift). Default on because a plugin sitting on a MIDI-fed track shouldn't silently re-pitch the hold. GUI: the vertical Ignore/Follow switch on the Alter tab (ported from `../lanes-audio-plugin`'s `VerticalToggle`). |
 | Glide `transposeGlide` | 0 .. 2000 ms | 0 | Portamento time for pitch changes — knob moves and MIDI note-ons alike, applied identically (the MIDI offset is folded into the glide target before smoothing). 0 = instant (bit-exact with pre-U3 behaviour). One-pole per hop in the engine, not the processor — see [dsp-design.md](dsp-design.md#transpose-agent-wikiplan-roadmapmd-b3). |
-| Spread `spread`     | 0 .. 1         | 0.0     | Momentary per-bin left/right gain spread on the **output only** — never enters the held state. Deterministic per-bin hash so channels vary in a fixed, repeatable pattern (equal-power, `gL²+gR²=2`). No effect on a mono bus. GUI: knob on the Perform tab (agent-wiki/plan-uifix.md U3; had no widget at all from B5 until then). |
+| Spread `spread`     | 0 .. 1         | 0.0     | Momentary per-bin left/right gain spread on the **output only** — never enters the held state. Deterministic per-bin hash so channels vary in a fixed, repeatable pattern (equal-power, `gL²+gR²=2`). No effect on a mono bus. GUI: knob on the Alter tab (agent-wiki/plan-uifix.md U3; had no widget at all from B5 until then). |
 | FT Size (GUI only)  | 1024 .. 8192   | 4096    | FFT size. `ComboBox`, powers of two. Not a DAW parameter. |
 | Live / 0 PDC (GUI only) | bool       | off     | Reports **0 latency** to the host (no plugin delay compensation) for live use. The real STFT latency is unchanged; the host just stops delay-compensating. |
 
