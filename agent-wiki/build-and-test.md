@@ -61,8 +61,8 @@ near ~1.0 for the unity-ish passthrough case (currently ~1.06).
 
 ## CI (agent-wiki/plan-roadmap.md B10)
 `.github/workflows/build.yml` — predates this plan's B10 entry (the plan was written without
-checking; it already existed). **Triggers: `v*` tag pushes and manual `workflow_dispatch`
-only** — no builds on pushes to `main` or on PRs. Matrix: Linux/macOS/Windows, each checks out this repo and a
+checking; it already existed). **Triggers: version-tag pushes (`v*` by convention, bare `X.Y.Z` also accepted) and
+manual `workflow_dispatch` only** — no builds on pushes to `main` or on PRs. Matrix: Linux/macOS/Windows, each checks out this repo and a
 pinned `juce-framework/JUCE@8.0.12` (same major as `../JUCE` locally — re-pin together if you
 bump JUCE) into sibling dirs, builds VST3 + Standalone + `SpectralHoldTest`, and **runs** the
 test on Linux/macOS ("Run DSP smoke-test (Unix)") and Windows (separate `.exe` step) — not
@@ -79,13 +79,18 @@ root with no indication what plugin it even is); pointing it at the staging fold
 loses the wrapper name the same way. One combined artifact per OS:
 `autotel-spectral-hold-<Linux|macOS|Windows>`.
 
-**Releases**: a `v*` tag push additionally runs the `release` job (`needs:
-build`, gated on `startsWith(github.ref, 'refs/tags/v')`) — downloads every platform's
+**Releases**: a version-tag push additionally runs the `release` job (`needs:
+build`, gated on `startsWith(github.ref, 'refs/tags/')`) — downloads every platform's
 artifact, zips each `autotel-spectral-hold/` folder into
 `autotel-spectral-hold-<platform>.zip`, and publishes a GitHub Release via
 `softprops/action-gh-release` with those zips attached and auto-generated release notes.
 Uses the default `GITHUB_TOKEN` (no PAT needed) — the job has explicit
 `permissions: contents: write` since the repo/org default may not grant that.
+- **A workflow only fires for a tag whose *tagged commit* has the matching trigger** —
+  GitHub reads `build.yml` from the tag's commit. Before 2026-10-01 only `v*` matched, so the
+  UI-created `1.2.0` tag/release did nothing. A manual `workflow_dispatch` run builds but
+  does **not** publish (its `github.ref` is a branch). Bump `project(... VERSION ...)` in
+  `CMakeLists.txt` before tagging — the plugin reports that version, not the tag.
 
 ## Notes
 - LTO is on (JUCE recommended flags); link is a little slow. Normal.
