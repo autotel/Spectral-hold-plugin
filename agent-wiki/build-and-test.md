@@ -61,7 +61,8 @@ near ~1.0 for the unity-ish passthrough case (currently ~1.06).
 
 ## CI (agent-wiki/plan-roadmap.md B10)
 `.github/workflows/build.yml` — predates this plan's B10 entry (the plan was written without
-checking; it already existed). Matrix: Linux/macOS/Windows, each checks out this repo and a
+checking; it already existed). **Triggers: `v*` tag pushes and manual `workflow_dispatch`
+only** — no builds on pushes to `main` or on PRs. Matrix: Linux/macOS/Windows, each checks out this repo and a
 pinned `juce-framework/JUCE@8.0.12` (same major as `../JUCE` locally — re-pin together if you
 bump JUCE) into sibling dirs, builds VST3 + Standalone + `SpectralHoldTest`, and **runs** the
 test on Linux/macOS ("Run DSP smoke-test (Unix)") and Windows (separate `.exe` step) — not
@@ -78,7 +79,7 @@ root with no indication what plugin it even is); pointing it at the staging fold
 loses the wrapper name the same way. One combined artifact per OS:
 `autotel-spectral-hold-<Linux|macOS|Windows>`.
 
-**Releases**: pushing a tag matching `v*` additionally runs the `release` job (`needs:
+**Releases**: a `v*` tag push additionally runs the `release` job (`needs:
 build`, gated on `startsWith(github.ref, 'refs/tags/v')`) — downloads every platform's
 artifact, zips each `autotel-spectral-hold/` folder into
 `autotel-spectral-hold-<platform>.zip`, and publishes a GitHub Release via
@@ -91,11 +92,29 @@ Uses the default `GITHUB_TOKEN` (no PAT needed) — the job has explicit
 - Linux + GCC is the primary dev target here, but macOS and Windows both build **and run the
   DSP test** in CI (see above) — no platform-specific code, and it's actually verified there,
   not just assumed to work.
-- **Automated GUI screenshotting does not work in this environment — don't attempt it.**
-  There's a real X display (`$DISPLAY=:0`), but no `Xvfb`/`scrot`/`import`/`xdotool`; `xwd`
-  is present but fails (`BadMatch` on root, `BadColor` on the app window — likely an
-  ARGB/compositing visual mismatch) and no headless fallback is installed. Confirmed
-  by the user ("the ability to take screenshots hasn't worked in the past"). For GUI/layout
-  changes, reason about pixel math from `resized()` instead (verify by summing widths
-  against the actual container rect, not assumption), or ask the user to eyeball it — don't
-  burn time re-discovering this each session.
+- **GUI screenshots: use the `SpectralHoldScreenshots` target, not X capture.**
+  `Source/screenshot_main.cpp` builds the real processor + editor, feeds synthetic stereo
+  chords through `processBlock` while pumping the message loop (`runDispatchLoopUntil`,
+  needs `JUCE_MODAL_LOOPS_PERMITTED=1`, set on that target only) and renders scenes via
+  `createComponentSnapshot` at 1.5x into `docs/images/*.png` — the images used by
+  `README.md` and `docs/MANUAL.md`. Not built by `build.sh`:
+  ```bash
+  cmake --build build --target SpectralHoldScreenshots
+  xvfb-run -a build/SpectralHoldScreenshots_artefacts/Release/SpectralHoldScreenshots docs/images
+  ```
+  ~80 s (real-time: the display's 30 Hz timer needs wall-clock time). Then `Read` the PNGs
+  to eyeball layout changes.
+  - **Mouse input is real JUCE dispatch**: the editor is `addToDesktop`'d on the Xvfb
+    screen so `ComponentPeer::handleMouseEvent` can inject hover/press — that's what drives
+    the info bar (hover) and brush strokes (press-and-hold) in the scenes.
+  - **`JUCEApplicationBase::createInstance` is set to a dummy** at the top of `main()`:
+    JUCE only installs its ignore-all X error handler for "standalone apps", and a
+    WM-less Xvfb raises a harmless `BadAtom` on window creation that otherwise kills the
+    process in Xlib's default handler.
+  - Private editor members are found by walking children (`Rig::knob("Loss")` matches a
+    visible `Label` to the rotary `Slider` under it; nth=0 = topmost, e.g. main-row Feed vs
+    the Shaper's Feed). Annotations (amber rings, lettered badges) are drawn onto the
+    snapshot in `Rig::save`.
+  - Capture never touches the X server, so the old `xwd` `BadMatch`/`BadColor` failures on
+    `$DISPLAY=:0` are irrelevant. When UI or behaviour shown in the manual changes, update
+    the scene and `docs/MANUAL.md`, and regenerate.

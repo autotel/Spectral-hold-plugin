@@ -33,7 +33,8 @@ User-reported problems this plan fixes, verbatim intent:
 - `SpectralEngine` stays `juce_dsp`-only (the test target depends on it).
 - Defaults preserve today's sound **bit-exact**: `transposeSnap` defaults off (today's
   continuous behaviour) and `transposeGlide` defaults to 0 ms (instant, today's behaviour).
-- **No GUI screenshots** — they don't work in this environment (see build-and-test.md).
+- **No GUI screenshots** — at the time they didn't work here; there is now an offscreen
+  screenshot target (see build-and-test.md).
   Verify layout by summing widths against the container rect; ask the user to eyeball it.
 
 ## U0. Branch setup — DONE

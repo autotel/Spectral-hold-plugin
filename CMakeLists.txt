@@ -73,3 +73,24 @@ target_compile_definitions(SpectralHoldTest PRIVATE
 target_link_libraries(SpectralHoldTest PRIVATE
     juce::juce_dsp
     juce::juce_recommended_config_flags)
+
+# ---- offscreen README screenshots (not built by build.sh) ----
+# cmake --build build --target SpectralHoldScreenshots
+# xvfb-run -a build/SpectralHoldScreenshots_artefacts/Release/SpectralHoldScreenshots docs/images
+juce_add_console_app(SpectralHoldScreenshots PRODUCT_NAME "SpectralHoldScreenshots")
+target_sources(SpectralHoldScreenshots PRIVATE
+    Source/screenshot_main.cpp
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
+    Source/SpectralEngine.cpp
+    Source/PlateReverb.cpp
+    Source/SpectrumDisplay.cpp
+    Source/SpectralLookAndFeel.cpp
+    Source/VerticalToggle.cpp)
+target_compile_definitions(SpectralHoldScreenshots PRIVATE
+    JUCE_STANDALONE_APPLICATION=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0
+    JUCE_MODAL_LOOPS_PERMITTED=1)
+target_link_libraries(SpectralHoldScreenshots PRIVATE
+    juce::juce_audio_utils
+    juce::juce_dsp
+    juce::juce_recommended_config_flags)
