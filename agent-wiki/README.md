@@ -12,6 +12,9 @@ Fourier transform: each bin is a free-running phasor (phase-vocoder synthesis), 
 held tones are continuous sinusoids, not a repeating buffer. VST3 + Standalone, Linux.
 
 ## Wiki index
+- **User-facing docs live outside the wiki:** [`../README.md`](../README.md) (short) and
+  [`../docs/MANUAL.md`](../docs/MANUAL.md) (every control, with screenshots from the
+  `SpectralHoldScreenshots` target — see build-and-test.md). Keep them in sync with behaviour.
 - [product-spec.md](product-spec.md) — the product specification **as given by the user**.
   Keep development congruent with this. Do not silently diverge.
 - [architecture.md](architecture.md) — file layout, signal flow, threading.

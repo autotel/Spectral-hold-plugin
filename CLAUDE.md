@@ -14,3 +14,5 @@ Fast start:
 
 Rule: when you change behavior, update the matching `agent-wiki/` page in the same task and
 re-run `./build.sh`.
+If the change is user-visible, also update `docs/MANUAL.md` and regenerate its screenshots
+(`SpectralHoldScreenshots`, see `agent-wiki/build-and-test.md`).
